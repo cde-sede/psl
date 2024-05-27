@@ -6,13 +6,22 @@ from typing import Optional, Any
 import subprocess
 import sys
 import os
+from pathlib import Path
+import shutil
+
+import argparse
+import tokenize
+
 
 def iota(reset=False, *, v=[-1]):
 	if reset:
 		v[0] = -1
 	v[0] += 1
 	return v[0]
-	
+
+class UnknownToken(Exception):
+	pass
+
 class TokenTypes(Enum):
 	OP_PUSH		= iota(True)
 	OP_POP		= iota()
@@ -70,6 +79,25 @@ class Compiler:
 		self.buffer.write("global _start\n")
 		self.buffer.write("_start:\n")
 
+	def call_cfunction(self, name: str, args: list[Any | None]):
+		"""  x86 arg registers
+		arg0 (%rdi)	arg1 (%rsi)	arg2 (%rdx)	arg3 (%r10)	arg4 (%r8)	arg5 (%r9)
+		"""
+
+		self.buffer.write(f"  ; {name} {args}\n")
+		registers = ["rdi", "rsi", "rdx", "r10", "r8", "r9"]
+		if len(args) < 7:
+			for reg, arg in reversed([*zip(registers, args)]):
+				if arg is None:
+					self.buffer.write(f"  pop  {reg}\n")
+				else:
+					self.buffer.write(f"  mov  {reg},{arg}\n")
+
+		self.buffer.write(f"  push rbp\n")
+		self.buffer.write(f"  mov  rbp,rsp\n")
+		self.buffer.write(f"  call __dump\n")
+		self.buffer.write(f"  pop  rbp\n")
+
 	def step(self, instruction: Token):
 		assert TokenTypes.OP_COUNT.value == 6, "Not all operators are handled"
 		match instruction:
@@ -89,15 +117,10 @@ class Compiler:
 				self.buffer.write(f"  ; pop\n")
 				self.buffer.write(f"  pop  rax\n")
 				self.buffer.write(f"  pop  rbx\n")
-				self.buffer.write(f"  sub  rax,rbx\n")
-				self.buffer.write(f"  push rax\n")
+				self.buffer.write(f"  sub  rbx,rax\n")
+				self.buffer.write(f"  push rbx\n")
 			case Token(type=TokenTypes.OP_DUMP, value=val):
-				self.buffer.write(f"  ; dump\n")
-				self.buffer.write(f"  pop   rdi\n")
-				self.buffer.write(f"  push  rbp\n")
-				self.buffer.write(f"  mov   rbp,rsp\n")
-				self.buffer.write(f"  call  __dump\n")
-				self.buffer.write(f"  pop   rbp\n")
+				self.call_cfunction("__dump", [None])
 			case Token(type=TokenTypes.OP_EXIT, value=val):
 				self.buffer.write(f"  ; EXIT\n")
 				self.buffer.write(f"  mov  rax,60\n")
@@ -106,7 +129,7 @@ class Compiler:
 			case _:
 				raise NotImplemented(instruction)
 
-class Simulator:
+class Interpreter:
 	def __init__(self):
 		self.queue = Queue(-1)
 
@@ -126,8 +149,9 @@ class Simulator:
 				b = self.pop()
 				self.queue.put(b - a)
 			case Token(type=TokenTypes.OP_DUMP, value=val):
-				for i in iterqueue(self.queue):
-					print(i)
+				print(self.pop())
+#				for i in iterqueue(self.queue):
+#					print(i)
 			case Token(type=TokenTypes.OP_EXIT, value=val):
 				exit(val)
 			case _:
@@ -137,6 +161,32 @@ class Program:
 	def __init__(self, engine=None):
 		self.queue = Queue(-1)
 		self.engine = engine
+
+	@classmethod
+	def fromfile(cls, path):
+		with open(path, 'r') as f:
+			return cls.frombuffer(f)
+
+	@classmethod
+	def frombuffer(cls, buffer):
+		tokens = tokenize.generate_tokens(buffer.readline)
+		self = cls()
+		for token in tokens:
+			match token:
+				case tokenize.TokenInfo(type=tokenize.NUMBER, string=s):
+					self.add(PUSH(int(s)))
+				case tokenize.TokenInfo(type=tokenize.OP, string=s):
+					if s == '+': self.add(PLUS())
+					elif s == '-': self.add(MINUS())
+					else: raise UnknownToken(token)
+				case tokenize.TokenInfo(type=tokenize.NAME, string=s):
+					if s == 'dump': self.add(DUMP())
+					elif s == 'exit': self.add(EXIT())
+					else: raise UnknownToken(token)
+				case tokenize.TokenInfo(type=tokenize.STRING, string=s):
+					raise UnknownToken(token)
+		return self
+			
 
 	def add(self, token: Token) -> 'Program':
 		self.queue.put(token)
@@ -148,25 +198,74 @@ class Program:
 		for i in iterqueue(self.queue):
 			self.engine.step(i)
 
-def main(ac: int, av: list[str]):
-	if ac == 1:
-		print(f"Usage: {av[0]} [0 || 1]")
-		return
+def callcmd(cmd, verbose=False):
+	if verbose:
+		print("BUILD:", cmd)
+		return subprocess.call(cmd)
+	else:
+		return subprocess.call(cmd, stdout=subprocess.DEVNULL)
 
-	p = (Program()
-		.add(PUSH(4))
-		.add(PUSH(4))
-		.add(PLUS())
-		.add(DUMP())
-		.add(EXIT())
-	)
-	if av[1] == '0':
-		p.engine = Simulator()
+
+
+def main(ac: int, av: list[str]):
+	parser = argparse.ArgumentParser(prog="slang", description="A stack based language written in python")
+	parser.add_argument("engine", choices=["interpret", "compile", "fclean"])
+	parser.add_argument("-s", "--source")
+	parser.add_argument("-o", "--output", default="a.out")
+	parser.add_argument("-v", "--verbose", action="store_true")
+	args = parser.parse_args()
+
+	if args.source:
+		with open(args.source, 'r') as f:
+			try:
+				p = Program.frombuffer(f)
+			except UnknownToken as e:
+				token: tokenize.TokenInfo = e.args[0]
+				print("\033[31mError: Unknown token:\033[0m\n")
+				print(token.line, end='')
+				print(f"{'': <{token.start[1]}}{'^':^<{token.end[1] - token.start[1]}}")
+				exit()
+	else:
+		p = (Program()
+			.add(PUSH(35))
+			.add(PUSH(35))
+			.add(PLUS())
+			.add(PUSH(1))
+			.add(MINUS())
+			.add(DUMP())
+			.add(EXIT())
+		)
+	if args.engine == 'fclean':
+		objs = Path("objs")
+		if args.verbose:
+			print("rm -rf objs")
+		try:
+			shutil.rmtree(objs)
+		except FileNotFoundError:
+			pass
+		callcmd(["make", "-C", "src/cfunc/", "fclean"], verbose=args.verbose)
+		
+	if args.engine == 'interpret':
+		p.engine = Interpreter()
 		p.run()
-	elif av[1] == '1':
-		with open("output.asm", 'w') as f:
+	if args.engine == 'compile':
+		objs = Path("objs")
+		if not objs.exists():
+			objs.mkdir()
+		with open(objs / "intermediary.asm", 'w') as f:
 			p.engine = Compiler(f)
 			p.run()
-		subprocess.call(["gcc", "-c", "src/dump.c", "-o", "src/dump.o", "-lasm", "-g", "-ggdb"])
-		subprocess.call(["nasm", "-f", "elf64", "output.asm"])
-		subprocess.call(["ld", "src/dump.o", "output.o", "-lc", "-I", "/lib64/ld-linux-x86-64.so.2"])
+
+		callcmd(["make", "-C", "src/cfunc/"], verbose=args.verbose)
+		callcmd(["nasm", "-f", "elf64", "objs/intermediary.asm", "-o", "objs/intermediary.o"], verbose=args.verbose)
+		callcmd(["ld",
+				 "src/cfunc/objs/dump.o",
+				 "objs/intermediary.o",
+				 "-lc",
+				 "-I",
+				 "/lib64/ld-linux-x86-64.so.2",
+		   		 "-o",
+		   		 args.output
+			],
+			verbose=args.verbose
+		)

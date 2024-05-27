@@ -14,4 +14,3 @@ extern void	__dump(uint64_t x)
 	putnbr(x);
 	write(1, "\n", 1);
 }
-
