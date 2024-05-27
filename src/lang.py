@@ -44,6 +44,7 @@ class TokenTypes(Enum):
 
 	OP_DUMP		= iota()
 	OP_IF		= iota()
+	OP_ELSE		= iota()
 	OP_END		= iota()
 
 	OP_EXIT		= iota()
@@ -83,6 +84,7 @@ def LT(info=None) -> Token: return Token(TokenTypes.OP_LT, info=info)
 def LE(info=None) -> Token: return Token(TokenTypes.OP_LE, info=info)
 def DUMP(info=None) -> Token: return Token(TokenTypes.OP_DUMP, info=info)
 def IF(info=None) -> Token: return Token(TokenTypes.OP_IF, info=info)
+def ELSE(info=None) -> Token: return Token(TokenTypes.OP_ELSE, info=info)
 def END(info=None) -> Token: return Token(TokenTypes.OP_END, info=info)
 def EXIT(code: int=0, info=None) -> Token: return Token(TokenTypes.OP_EXIT, value=code, info=info)
 
@@ -113,17 +115,17 @@ class Compiler:
 		if len(args) < 7:
 			for reg, arg in reversed([*zip(registers, args)]):
 				if arg is None:
-					self.buffer.write(f"  pop  {reg}\n")
+					self.buffer.write(f"  pop    {reg}\n")
 				else:
-					self.buffer.write(f"  mov  {reg},{arg}\n")
+					self.buffer.write(f"  mov    {reg},{arg}\n")
 
-		self.buffer.write(f"  push rbp\n")
-		self.buffer.write(f"  mov  rbp,rsp\n")
-		self.buffer.write(f"  call __dump\n")
-		self.buffer.write(f"  pop  rbp\n")
+		self.buffer.write(f"  push   rbp\n")
+		self.buffer.write(f"  mov    rbp,rsp\n")
+		self.buffer.write(f"  call   __dump\n")
+		self.buffer.write(f"  pop    rbp\n")
 
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 16, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 17, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
 				self.buffer.write(f"  ; push {val}\n")
@@ -216,16 +218,22 @@ class Compiler:
 				self.call_cfunction("__dump", [None])
 			case Token(type=TokenTypes.OP_EXIT, value=val):
 				self.buffer.write(f"  ; EXIT\n")
-				self.buffer.write(f"  mov   rax,60\n")
-				self.buffer.write(f"  mov   rdi,{val}\n")
+				self.buffer.write(f"  mov    rax,60\n")
+				self.buffer.write(f"  mov    rdi,{val}\n")
 				self.buffer.write(f"  syscall\n")
 
 			case Token(type=TokenTypes.OP_IF, value=val):
 				self.buffer.write(f"  ; if\n")
 				self.buffer.write(f"{instruction.label()}:\n")
-				self.buffer.write(f"  pop   rax\n")
-				self.buffer.write(f"  test  rax,rax\n")
-				self.buffer.write(f"  je    {val[1].label()}\n")
+				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  test   rax,rax\n")
+				self.buffer.write(f"  jz     {val[1].label()}\n")
+
+			case Token(type=TokenTypes.OP_ELSE, value=val):
+				self.buffer.write(f"  ; else\n")
+				self.buffer.write(f"  jmp    {val[1].label()}\n")
+				self.buffer.write(f"{instruction.label()}:\n")
+
 			case Token(type=TokenTypes.OP_END, value=val):
 				self.buffer.write(f"  ; end\n")
 				self.buffer.write(f"{instruction.label()}:\n")
@@ -241,7 +249,7 @@ class Interpreter:
 	def push(self, v: Any): self.queue.put(v)
 	def pop(self) -> Any: return self.queue.get_nowait()
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 16, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 17, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
 				self.queue.put(val)
@@ -288,6 +296,8 @@ class Interpreter:
 				a = self.pop()
 				if a == 0:
 					return val[0]
+			case Token(type=TokenTypes.OP_ELSE, value=val):
+				return val[0]
 			case Token(type=TokenTypes.OP_END, value=val):
 				pass
 			case Token(type=TokenTypes.OP_EXIT, value=val):
@@ -308,7 +318,7 @@ class Program:
 
 	@classmethod
 	def frombuffer(cls, buffer):
-		assert TokenTypes.OP_COUNT.value == 16, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 17, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		tokens = tokenize.generate_tokens(buffer.readline)
 		self = cls()
 		for token in tokens:
@@ -331,6 +341,7 @@ class Program:
 					if s == 'dump': self.add(DUMP(info=token))
 					elif s == 'exit': self.add(EXIT(info=token))
 					elif s == 'if': self.add(IF(info=token))
+					elif s == 'else': self.add(ELSE(info=token))
 					elif s == 'end': self.add(END(info=token))
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.STRING, string=s):
@@ -338,12 +349,18 @@ class Program:
 		self.process_flow_control(iter(self.queue.queue))
 #		for token in self.queue.queue:
 #			print(token)
+#		exit()
 		return self
 	
 	def process_flow_control(self, iterator):
 		ifs = []
 		for pos, token in enumerate(iterator):
 			if token.type == TokenTypes.OP_IF:
+				ifs.append((pos, token))
+			if token.type == TokenTypes.OP_ELSE:
+				p,t = ifs.pop(-1)
+				t.value = pos - p, token
+				token.value = pos - p, t
 				ifs.append((pos, token))
 			if token.type == TokenTypes.OP_END:
 				p,t = ifs.pop(-1)
