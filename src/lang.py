@@ -11,6 +11,7 @@ import shutil
 
 import argparse
 import tokenize
+import uuid
 
 
 def iota(reset=False, *, v=[-1]):
@@ -21,51 +22,69 @@ def iota(reset=False, *, v=[-1]):
 
 class UnknownToken(Exception):
 	pass
+class InvalidSyntax(Exception):
+	pass
+
 
 class TokenTypes(Enum):
 	OP_PUSH		= iota(True)
 	OP_POP		= iota()
+
 	OP_PLUS		= iota()
 	OP_MINUS	= iota()
 	OP_MUL		= iota()
 	OP_DIV		= iota()
+
 	OP_EQ		= iota()
 	OP_NE		= iota()
 	OP_GT		= iota()
 	OP_GE		= iota()
 	OP_LT		= iota()
 	OP_LE		= iota()
+
 	OP_DUMP		= iota()
+	OP_IF		= iota()
+	OP_END		= iota()
+
 	OP_EXIT		= iota()
 	OP_COUNT	= iota()
 
 class Token:
-	__slots__ = ("type", "value")
+	__slots__ = ("type", "value", "info", "id")
 
 	type: TokenTypes
 	value: Any
+	info: tokenize.TokenInfo | None
+	id: str
 
-	def __init__(self, type: TokenTypes, value: Any=None):
+	def __init__(self, type: TokenTypes, value: Any=None, info=None):
 		self.value = value
 		self.type = type
+		self.info = info
+		self.id = str(uuid.uuid4())[:8]
 
 	def __repr__(self):
 		return f"{self.type}{f" {self.value}" if self.value else ""}"
 
-def PUSH(val: Any) -> Token: return Token(TokenTypes.OP_PUSH, val)
-def POP() -> Token: return Token(TokenTypes.OP_POP)
-def PLUS() -> Token: return Token(TokenTypes.OP_PLUS)
-def MINUS() -> Token: return Token(TokenTypes.OP_MINUS)
-def MUL() -> Token: return Token(TokenTypes.OP_MUL)
-def DIV() -> Token: return Token(TokenTypes.OP_DIV)
-def EQ() -> Token: return Token(TokenTypes.OP_EQ)
-def NE() -> Token: return Token(TokenTypes.OP_NE)
-def GT() -> Token: return Token(TokenTypes.OP_GT)
-def GE() -> Token: return Token(TokenTypes.OP_GE)
-def LT() -> Token: return Token(TokenTypes.OP_LT)
-def LE() -> Token: return Token(TokenTypes.OP_LE)
-def DUMP() -> Token: return Token(TokenTypes.OP_DUMP)
-def EXIT(code: int=0) -> Token: return Token(TokenTypes.OP_EXIT, value=code)
+	def label(self):
+		return f"{self.type.name}_{self.id}"
+
+def PUSH(val: Any, info=None) -> Token: return Token(TokenTypes.OP_PUSH, val, info=info)
+def POP(info=None) -> Token: return Token(TokenTypes.OP_POP, info=info)
+def PLUS(info=None) -> Token: return Token(TokenTypes.OP_PLUS, info=info)
+def MINUS(info=None) -> Token: return Token(TokenTypes.OP_MINUS, info=info)
+def MUL(info=None) -> Token: return Token(TokenTypes.OP_MUL, info=info)
+def DIV(info=None) -> Token: return Token(TokenTypes.OP_DIV, info=info)
+def EQ(info=None) -> Token: return Token(TokenTypes.OP_EQ, info=info)
+def NE(info=None) -> Token: return Token(TokenTypes.OP_NE, info=info)
+def GT(info=None) -> Token: return Token(TokenTypes.OP_GT, info=info)
+def GE(info=None) -> Token: return Token(TokenTypes.OP_GE, info=info)
+def LT(info=None) -> Token: return Token(TokenTypes.OP_LT, info=info)
+def LE(info=None) -> Token: return Token(TokenTypes.OP_LE, info=info)
+def DUMP(info=None) -> Token: return Token(TokenTypes.OP_DUMP, info=info)
+def IF(info=None) -> Token: return Token(TokenTypes.OP_IF, info=info)
+def END(info=None) -> Token: return Token(TokenTypes.OP_END, info=info)
+def EXIT(code: int=0, info=None) -> Token: return Token(TokenTypes.OP_EXIT, value=code, info=info)
 
 def iterqueue(q):
 	while True:
@@ -104,7 +123,7 @@ class Compiler:
 		self.buffer.write(f"  pop  rbp\n")
 
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 14, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 16, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
 				self.buffer.write(f"  ; push {val}\n")
@@ -200,8 +219,20 @@ class Compiler:
 				self.buffer.write(f"  mov   rax,60\n")
 				self.buffer.write(f"  mov   rdi,{val}\n")
 				self.buffer.write(f"  syscall\n")
+
+			case Token(type=TokenTypes.OP_IF, value=val):
+				self.buffer.write(f"  ; if\n")
+				self.buffer.write(f"{instruction.label()}:\n")
+				self.buffer.write(f"  pop   rax\n")
+				self.buffer.write(f"  test  rax,rax\n")
+				self.buffer.write(f"  je    {val[1].label()}\n")
+			case Token(type=TokenTypes.OP_END, value=val):
+				self.buffer.write(f"  ; end\n")
+				self.buffer.write(f"{instruction.label()}:\n")
 			case _:
-				raise NotImplemented(instruction)
+				print(instruction)
+				raise Exception
+		return 0
 
 class Interpreter:
 	def __init__(self):
@@ -210,12 +241,13 @@ class Interpreter:
 	def push(self, v: Any): self.queue.put(v)
 	def pop(self) -> Any: return self.queue.get_nowait()
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 14, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 16, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
 				self.queue.put(val)
 			case Token(type=TokenTypes.OP_POP, value=val):
 				self.pop()
+
 			case Token(type=TokenTypes.OP_PLUS, value=val):
 				self.queue.put(self.pop() + self.pop())
 			case Token(type=TokenTypes.OP_MUL, value=val):
@@ -252,14 +284,21 @@ class Interpreter:
 				print(self.pop())
 #				for i in iterqueue(self.queue):
 #					print(i)
+			case Token(type=TokenTypes.OP_IF, value=val):
+				a = self.pop()
+				if a == 0:
+					return val[0]
+			case Token(type=TokenTypes.OP_END, value=val):
+				pass
 			case Token(type=TokenTypes.OP_EXIT, value=val):
 				exit(val)
 			case _:
 				raise NotImplemented(instruction)
+		return 0
 
 class Program:
 	def __init__(self, engine=None):
-		self.queue = Queue(-1)
+		self.queue: "Queue[Token]" = Queue(-1)
 		self.engine = engine
 
 	@classmethod
@@ -269,33 +308,49 @@ class Program:
 
 	@classmethod
 	def frombuffer(cls, buffer):
-		assert TokenTypes.OP_COUNT.value == 14, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 16, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		tokens = tokenize.generate_tokens(buffer.readline)
 		self = cls()
 		for token in tokens:
 			match token:
 				case tokenize.TokenInfo(type=tokenize.NUMBER, string=s):
-					self.add(PUSH(int(s)))
+					self.add(PUSH(int(s), info=token))
 				case tokenize.TokenInfo(type=tokenize.OP, string=s):
-					if s == '+': self.add(PLUS())
-					elif s == '-': self.add(MINUS())
-					elif s == '*': self.add(MUL())
-					elif s == '/': self.add(DIV())
-					elif s == '==': self.add(EQ())
-					elif s == '!=': self.add(NE())
-					elif s == '>': self.add(GT())
-					elif s == '>=': self.add(GE())
-					elif s == '<': self.add(LT())
-					elif s == '<=': self.add(LE())
+					if s == '+': self.add(PLUS(info=token))
+					elif s == '-': self.add(MINUS(info=token))
+					elif s == '*': self.add(MUL(info=token))
+					elif s == '/': self.add(DIV(info=token))
+					elif s == '==': self.add(EQ(info=token))
+					elif s == '!=': self.add(NE(info=token))
+					elif s == '>': self.add(GT(info=token))
+					elif s == '>=': self.add(GE(info=token))
+					elif s == '<': self.add(LT(info=token))
+					elif s == '<=': self.add(LE(info=token))
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.NAME, string=s):
-					if s == 'dump': self.add(DUMP())
-					elif s == 'exit': self.add(EXIT())
+					if s == 'dump': self.add(DUMP(info=token))
+					elif s == 'exit': self.add(EXIT(info=token))
+					elif s == 'if': self.add(IF(info=token))
+					elif s == 'end': self.add(END(info=token))
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.STRING, string=s):
 					raise UnknownToken(token)
+		self.process_flow_control(iter(self.queue.queue))
+#		for token in self.queue.queue:
+#			print(token)
 		return self
-			
+	
+	def process_flow_control(self, iterator):
+		ifs = []
+		for pos, token in enumerate(iterator):
+			if token.type == TokenTypes.OP_IF:
+				ifs.append((pos, token))
+			if token.type == TokenTypes.OP_END:
+				p,t = ifs.pop(-1)
+				t.value = pos - p, token
+				token.value = pos - p, t
+		if ifs:
+			raise InvalidSyntax(ifs[0][1].info)
 
 	def add(self, token: Token) -> 'Program':
 		self.queue.put(token)
@@ -304,8 +359,12 @@ class Program:
 	def run(self):
 		if self.engine is None:
 			raise ValueError("Add engine before running")
+		skip = 0
 		for i in iterqueue(self.queue):
-			self.engine.step(i)
+			if skip:
+				skip -= 1
+				continue
+			skip += self.engine.step(i)
 
 def callcmd(cmd, verbose=False):
 	if verbose:
@@ -329,9 +388,9 @@ def main(ac: int, av: list[str]):
 		with open(args.source, 'r') as f:
 			try:
 				p = Program.frombuffer(f)
-			except UnknownToken as e:
+			except (UnknownToken, InvalidSyntax) as e:
 				token: tokenize.TokenInfo = e.args[0]
-				print(f"\033[31mError: line {token.start[0]}: Unknown token:\033[0m\n")
+				print(f"\033[31mError: line {token.start[0]}: {e.__class__.__name__}:\033[0m\n")
 				print(token.line, end='')
 				print(f"{'': <{token.start[1]}}{'^':^<{token.end[1] - token.start[1]}}")
 				exit()
