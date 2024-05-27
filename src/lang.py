@@ -1,4 +1,4 @@
-from queue import Queue, Empty
+from queue import LifoQueue, Empty
 from enum import Enum, auto
 from abc import ABC, abstractmethod
 from typing import Optional, Any
@@ -29,6 +29,7 @@ class InvalidSyntax(Exception):
 class TokenTypes(Enum):
 	OP_PUSH		= iota(True)
 	OP_POP		= iota()
+	OP_DUP		= iota()
 
 	OP_PLUS		= iota()
 	OP_MINUS	= iota()
@@ -45,6 +46,8 @@ class TokenTypes(Enum):
 	OP_DUMP		= iota()
 	OP_IF		= iota()
 	OP_ELSE		= iota()
+	OP_WHILE	= iota()
+	OP_DO		= iota()
 	OP_END		= iota()
 
 	OP_EXIT		= iota()
@@ -72,6 +75,7 @@ class Token:
 
 def PUSH(val: Any, info=None) -> Token: return Token(TokenTypes.OP_PUSH, val, info=info)
 def POP(info=None) -> Token: return Token(TokenTypes.OP_POP, info=info)
+def DUP(info=None) -> Token: return Token(TokenTypes.OP_DUP, info=info)
 def PLUS(info=None) -> Token: return Token(TokenTypes.OP_PLUS, info=info)
 def MINUS(info=None) -> Token: return Token(TokenTypes.OP_MINUS, info=info)
 def MUL(info=None) -> Token: return Token(TokenTypes.OP_MUL, info=info)
@@ -85,24 +89,20 @@ def LE(info=None) -> Token: return Token(TokenTypes.OP_LE, info=info)
 def DUMP(info=None) -> Token: return Token(TokenTypes.OP_DUMP, info=info)
 def IF(info=None) -> Token: return Token(TokenTypes.OP_IF, info=info)
 def ELSE(info=None) -> Token: return Token(TokenTypes.OP_ELSE, info=info)
+def WHILE(info=None) -> Token: return Token(TokenTypes.OP_WHILE, info=info)
+def DO(info=None) -> Token: return Token(TokenTypes.OP_DO, info=info)
 def END(info=None) -> Token: return Token(TokenTypes.OP_END, info=info)
 def EXIT(code: int=0, info=None) -> Token: return Token(TokenTypes.OP_EXIT, value=code, info=info)
-
-def iterqueue(q):
-	while True:
-		try:
-			yield q.get_nowait()
-		except Empty:
-			return
 
 
 class Compiler:
 	def __init__(self, buffer):
 		self.buffer = buffer
 		self.buffer.write("extern __dump\n")
+		self.buffer.write("extern __udump\n")
 		self.buffer.write("segment .data\n")
 		self.buffer.write("segment .text\n")
-		self.buffer.write("global _start\n")
+		self.buffer.write("global _start\n\n")
 		self.buffer.write("_start:\n")
 
 	def call_cfunction(self, name: str, args: list[Any | None]):
@@ -125,7 +125,7 @@ class Compiler:
 		self.buffer.write(f"  pop    rbp\n")
 
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 17, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 20, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
 				self.buffer.write(f"  ; push {val}\n")
@@ -133,6 +133,11 @@ class Compiler:
 			case Token(type=TokenTypes.OP_POP, value=val):
 				self.buffer.write(f"  ; pop\n")
 				self.buffer.write(f"  ; NOT YET IMPLEMENTED\n")
+			case Token(type=TokenTypes.OP_DUP, value=val):
+				self.buffer.write(f"  ; pop\n")
+				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  push   rax\n")
+				self.buffer.write(f"  push   rax\n")
 			case Token(type=TokenTypes.OP_PLUS, value=val):
 				self.buffer.write(f"  ; plus\n")
 				self.buffer.write(f"  pop    rax\n")
@@ -163,8 +168,8 @@ class Compiler:
 				self.buffer.write(f"  ; eq\n")
 				self.buffer.write(f"  xor    rcx,rcx\n")
 				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  cmp    rbx,rax\n")
 				self.buffer.write(f"  cmove  rcx,rdx\n")
 				self.buffer.write(f"  push   rcx\n")
@@ -172,8 +177,8 @@ class Compiler:
 				self.buffer.write(f"  ; ne\n")
 				self.buffer.write(f"  xor    rcx,rcx\n")
 				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  cmp    rbx,rax\n")
 				self.buffer.write(f"  cmovne rcx,rdx\n")
 				self.buffer.write(f"  push   rcx\n")
@@ -181,17 +186,17 @@ class Compiler:
 				self.buffer.write(f"  ; gt\n")
 				self.buffer.write(f"  xor    rcx,rcx\n")
 				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmovgt rcx,rdx\n")
+				self.buffer.write(f"  cmovg  rcx,rdx\n")
 				self.buffer.write(f"  push   rcx\n")
 			case Token(type=TokenTypes.OP_GE, value=val):
 				self.buffer.write(f"  ; ge\n")
 				self.buffer.write(f"  xor    rcx,rcx\n")
 				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  cmp    rbx,rax\n")
 				self.buffer.write(f"  cmovge rcx,rdx\n")
 				self.buffer.write(f"  push   rcx\n")
@@ -199,23 +204,24 @@ class Compiler:
 				self.buffer.write(f"  ; lt\n")
 				self.buffer.write(f"  xor    rcx,rcx\n")
 				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmovlt rcx,rdx\n")
+				self.buffer.write(f"  cmovl  rcx,rdx\n")
 				self.buffer.write(f"  push   rcx\n")
 			case Token(type=TokenTypes.OP_LE, value=val):
 				self.buffer.write(f"  ; le\n")
 				self.buffer.write(f"  xor    rcx,rcx\n")
 				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  pop    rbx\n")
 				self.buffer.write(f"  cmp    rbx,rax\n")
 				self.buffer.write(f"  cmovle rcx,rdx\n")
 				self.buffer.write(f"  push   rcx\n")
 
 			case Token(type=TokenTypes.OP_DUMP, value=val):
 				self.call_cfunction("__dump", [None])
+
 			case Token(type=TokenTypes.OP_EXIT, value=val):
 				self.buffer.write(f"  ; EXIT\n")
 				self.buffer.write(f"  mov    rax,60\n")
@@ -234,8 +240,22 @@ class Compiler:
 				self.buffer.write(f"  jmp    {val[1].label()}\n")
 				self.buffer.write(f"{instruction.label()}:\n")
 
+			case Token(type=TokenTypes.OP_WHILE, value=val):
+				self.buffer.write(f"  ; while\n")
+				self.buffer.write(f"{instruction.label()}:\n")
+
+			case Token(type=TokenTypes.OP_DO, value=val):
+				self.buffer.write(f"  ; do\n")
+				self.buffer.write(f"{instruction.label()}:\n")
+				self.buffer.write(f"  pop    rax\n")
+				self.buffer.write(f"  test   rax,rax\n")
+				self.buffer.write(f"  jz     {val[1].label()}\n")
+
 			case Token(type=TokenTypes.OP_END, value=val):
 				self.buffer.write(f"  ; end\n")
+				if val[2].type in [TokenTypes.OP_WHILE,]:
+					self.buffer.write(f"  jmp    {val[2].label()}\n")
+
 				self.buffer.write(f"{instruction.label()}:\n")
 			case _:
 				print(instruction)
@@ -244,62 +264,69 @@ class Compiler:
 
 class Interpreter:
 	def __init__(self):
-		self.queue = Queue(-1)
+		self.queue = LifoQueue(-1)
 
 	def push(self, v: Any): self.queue.put(v)
 	def pop(self) -> Any: return self.queue.get_nowait()
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 17, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 20, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
 				self.queue.put(val)
 			case Token(type=TokenTypes.OP_POP, value=val):
 				self.pop()
-
+			case Token(type=TokenTypes.OP_DUP, value=val):
+				a = self.pop()
+				self.push(a)
+				self.push(a)
 			case Token(type=TokenTypes.OP_PLUS, value=val):
-				self.queue.put(self.pop() + self.pop())
+				self.push(self.pop() + self.pop())
 			case Token(type=TokenTypes.OP_MUL, value=val):
-				self.queue.put(self.pop() * self.pop())
+				self.push(self.pop() * self.pop())
 			case Token(type=TokenTypes.OP_DIV, value=val):
-				self.queue.put(self.pop() // self.pop())
+				self.push(self.pop() // self.pop())
 
 			case Token(type=TokenTypes.OP_EQ, value=val):
-				self.queue.put(int(self.pop() == self.pop()))
+				self.push(int(self.pop() == self.pop()))
 			case Token(type=TokenTypes.OP_NE, value=val):
-				self.queue.put(int(self.pop() != self.pop()))
+				self.push(int(self.pop() != self.pop()))
 			case Token(type=TokenTypes.OP_GT, value=val):
-				b = self.pop()
 				a = self.pop()
-				self.queue.put(int(a > b))
+				b = self.pop()
+				self.push(int(a > b))
 			case Token(type=TokenTypes.OP_GE, value=val):
-				b = self.pop()
 				a = self.pop()
-				self.queue.put(int(a >= b))
+				b = self.pop()
+				self.push(int(a >= b))
 			case Token(type=TokenTypes.OP_LT, value=val):
-				b = self.pop()
 				a = self.pop()
-				self.queue.put(int(a < b))
+				b = self.pop()
+				self.push(int(a < b))
 			case Token(type=TokenTypes.OP_LE, value=val):
-				b = self.pop()
 				a = self.pop()
-				self.queue.put(int(a <= b))
-
+				b = self.pop()
+				self.push(int(a <= b))
 			case Token(type=TokenTypes.OP_MINUS, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.queue.put(b - a)
+				self.push(b - a)
 			case Token(type=TokenTypes.OP_DUMP, value=val):
 				print(self.pop())
-#				for i in iterqueue(self.queue):
-#					print(i)
 			case Token(type=TokenTypes.OP_IF, value=val):
 				a = self.pop()
 				if a == 0:
 					return val[0]
 			case Token(type=TokenTypes.OP_ELSE, value=val):
 				return val[0]
-			case Token(type=TokenTypes.OP_END, value=val):
+			case Token(type=TokenTypes.OP_WHILE, value=val):
 				pass
+			case Token(type=TokenTypes.OP_DO, value=val):
+				a = self.pop()
+				if a == 0:
+					return val[0]
+			case Token(type=TokenTypes.OP_END, value=val):
+				if val[2].type in [TokenTypes.OP_WHILE,]:
+					return -(val[0] + val[2].value[0])
 			case Token(type=TokenTypes.OP_EXIT, value=val):
 				exit(val)
 			case _:
@@ -308,8 +335,9 @@ class Interpreter:
 
 class Program:
 	def __init__(self, engine=None):
-		self.queue: "Queue[Token]" = Queue(-1)
+		self.instructions: list[Token] = []
 		self.engine = engine
+		self.pointer = 0
 
 	@classmethod
 	def fromfile(cls, path):
@@ -318,7 +346,7 @@ class Program:
 
 	@classmethod
 	def frombuffer(cls, buffer):
-		assert TokenTypes.OP_COUNT.value == 17, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 20, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		tokens = tokenize.generate_tokens(buffer.readline)
 		self = cls()
 		for token in tokens:
@@ -339,49 +367,72 @@ class Program:
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.NAME, string=s):
 					if s == 'dump': self.add(DUMP(info=token))
+					elif s == 'dup': self.add(DUP(info=token))
 					elif s == 'exit': self.add(EXIT(info=token))
 					elif s == 'if': self.add(IF(info=token))
 					elif s == 'else': self.add(ELSE(info=token))
+					elif s == 'while': self.add(WHILE(info=token))
+					elif s == 'do': self.add(DO(info=token))
 					elif s == 'end': self.add(END(info=token))
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.STRING, string=s):
 					raise UnknownToken(token)
-		self.process_flow_control(iter(self.queue.queue))
-#		for token in self.queue.queue:
-#			print(token)
+		self.process_flow_control(iter(self.instructions))
+#		for token in self.instructions:
+#			if token.type == TokenTypes.OP_END:
+#				print(token.value[0])
+#				print(token.value[1])
+#				print(token.value[2])
 #		exit()
 		return self
 	
 	def process_flow_control(self, iterator):
-		ifs = []
+		assert TokenTypes.OP_COUNT.value == 20, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		stack = []
 		for pos, token in enumerate(iterator):
 			if token.type == TokenTypes.OP_IF:
-				ifs.append((pos, token))
-			if token.type == TokenTypes.OP_ELSE:
-				p,t = ifs.pop(-1)
-				t.value = pos - p, token
-				token.value = pos - p, t
-				ifs.append((pos, token))
-			if token.type == TokenTypes.OP_END:
-				p,t = ifs.pop(-1)
-				t.value = pos - p, token
-				token.value = pos - p, t
-		if ifs:
-			raise InvalidSyntax(ifs[0][1].info)
+				stack.append((pos, token))
+			elif token.type == TokenTypes.OP_ELSE:
+				p,t = stack.pop(-1)
+				if t.type not in [TokenTypes.OP_IF]:
+					raise InvalidSyntax(t.info)
+				t.value = pos - p, token, None
+				token.value = pos - p, t, t
+				stack.append((pos, token))
+			elif token.type == TokenTypes.OP_END:
+				p,t = stack.pop(-1)
+				if t.type not in [TokenTypes.OP_IF, TokenTypes.OP_ELSE, TokenTypes.OP_DO]:
+					raise InvalidSyntax(t.info)
+				t.value = pos - p, token, t.value[2] if t.value else t
+				token.value = pos - p, t, t.value[2]
+			elif token.type == TokenTypes.OP_WHILE:
+				stack.append((pos, token))
+			elif token.type == TokenTypes.OP_DO:
+				p,t = stack.pop(-1)
+				if t.type not in [TokenTypes.OP_WHILE]:
+					raise InvalidSyntax(t.info)
+				t.value = pos - p, token, None
+				token.value = pos - p, t, t
+				stack.append((pos, token))
+		if stack:
+			raise InvalidSyntax(stack[0][1].info)
 
 	def add(self, token: Token) -> 'Program':
-		self.queue.put(token)
+		self.instructions.append(token)
 		return self
 
 	def run(self):
 		if self.engine is None:
 			raise ValueError("Add engine before running")
 		skip = 0
-		for i in iterqueue(self.queue):
-			if skip:
-				skip -= 1
-				continue
-			skip += self.engine.step(i)
+		while self.pointer < len(self.instructions):
+			self.pointer += self.engine.step(self.instructions[self.pointer]) + 1
+
+#		for i in self.instructions:
+#			if skip:
+#				skip -= 1
+#				continue
+#			skip += self.engine.step(i)
 
 def callcmd(cmd, verbose=False):
 	if verbose:

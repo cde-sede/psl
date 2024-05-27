@@ -1,16 +1,12 @@
-#include <unistd.h>
 #include <stdint.h>
+#include <stdio.h>
 
-static void	putnbr(uint64_t x)
+extern void	__udump(uint64_t x)
 {
-	if (x >= 10)
-		putnbr(x / 10);
-	char c = '0' + x % 10;
-	write(1, &c, 1);
+	printf("%lu\n", x);
 }
 
 extern void	__dump(uint64_t x)
 {
-	putnbr(x);
-	write(1, "\n", 1);
+	printf("%ld\n", x);
 }
