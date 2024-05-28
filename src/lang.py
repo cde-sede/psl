@@ -25,6 +25,7 @@ class UnknownToken(Exception):
 class InvalidSyntax(Exception):
 	pass
 
+MEM_CAPACITY = 640_000
 
 class TokenTypes(Enum):
 	OP_PUSH		= iota(True)
@@ -44,11 +45,15 @@ class TokenTypes(Enum):
 	OP_LE		= iota()
 
 	OP_DUMP		= iota()
+	OP_UDUMP	= iota()
+	OP_HEXDUMP	= iota()
 	OP_IF		= iota()
 	OP_ELSE		= iota()
 	OP_WHILE	= iota()
 	OP_DO		= iota()
 	OP_END		= iota()
+
+	OP_MEM		= iota()
 
 	OP_EXIT		= iota()
 	OP_COUNT	= iota()
@@ -87,11 +92,14 @@ def GE(info=None) -> Token: return Token(TokenTypes.OP_GE, info=info)
 def LT(info=None) -> Token: return Token(TokenTypes.OP_LT, info=info)
 def LE(info=None) -> Token: return Token(TokenTypes.OP_LE, info=info)
 def DUMP(info=None) -> Token: return Token(TokenTypes.OP_DUMP, info=info)
+def UDUMP(info=None) -> Token: return Token(TokenTypes.OP_UDUMP, info=info)
+def HEXDUMP(info=None) -> Token: return Token(TokenTypes.OP_HEXDUMP, info=info)
 def IF(info=None) -> Token: return Token(TokenTypes.OP_IF, info=info)
 def ELSE(info=None) -> Token: return Token(TokenTypes.OP_ELSE, info=info)
 def WHILE(info=None) -> Token: return Token(TokenTypes.OP_WHILE, info=info)
 def DO(info=None) -> Token: return Token(TokenTypes.OP_DO, info=info)
 def END(info=None) -> Token: return Token(TokenTypes.OP_END, info=info)
+def MEM(info=None) -> Token: return Token(TokenTypes.OP_MEM, info=info)
 def EXIT(code: int=0, info=None) -> Token: return Token(TokenTypes.OP_EXIT, value=code, info=info)
 
 
@@ -100,6 +108,7 @@ class Compiler:
 		self.buffer = buffer
 		self.buffer.write("extern __dump\n")
 		self.buffer.write("extern __udump\n")
+		self.buffer.write("extern __hexdump\n")
 		self.buffer.write("segment .data\n")
 		self.buffer.write("segment .text\n")
 		self.buffer.write("global _start\n\n")
@@ -121,11 +130,11 @@ class Compiler:
 
 		self.buffer.write(f"  push   rbp\n")
 		self.buffer.write(f"  mov    rbp,rsp\n")
-		self.buffer.write(f"  call   __dump\n")
+		self.buffer.write(f"  call   {name}\n")
 		self.buffer.write(f"  pop    rbp\n")
 
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 20, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 23, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
 				self.buffer.write(f"  ; push {val}\n")
@@ -222,6 +231,12 @@ class Compiler:
 			case Token(type=TokenTypes.OP_DUMP, value=val):
 				self.call_cfunction("__dump", [None])
 
+			case Token(type=TokenTypes.OP_UDUMP, value=val):
+				self.call_cfunction("__udump", [None])
+
+			case Token(type=TokenTypes.OP_HEXDUMP, value=val):
+				self.call_cfunction("__hexdump", [None])
+
 			case Token(type=TokenTypes.OP_EXIT, value=val):
 				self.buffer.write(f"  ; EXIT\n")
 				self.buffer.write(f"  mov    rax,60\n")
@@ -257,15 +272,26 @@ class Compiler:
 					self.buffer.write(f"  jmp    {val[2].label()}\n")
 
 				self.buffer.write(f"{instruction.label()}:\n")
+
+			case Token(type=TokenTypes.OP_MEM, value=val):
+				self.buffer.write(f"  ; mem\n")
+				self.buffer.write(f"  push   mem\n")
+				
 			case _:
 				print(instruction)
 				raise Exception
 		return 0
 
+	def close(self):
+		self.buffer.write(f"segment .bss\n")
+		self.buffer.write(f"mem: resb {MEM_CAPACITY}\n")
+
 class Interpreter:
 	def __init__(self):
 		self.queue = LifoQueue(-1)
 
+	def close(self):
+		pass
 	def push(self, v: Any): self.queue.put(v)
 	def pop(self) -> Any: return self.queue.get_nowait()
 	def step(self, instruction: Token):
@@ -346,7 +372,7 @@ class Program:
 
 	@classmethod
 	def frombuffer(cls, buffer):
-		assert TokenTypes.OP_COUNT.value == 20, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 23, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		tokens = tokenize.generate_tokens(buffer.readline)
 		self = cls()
 		for token in tokens:
@@ -367,6 +393,8 @@ class Program:
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.NAME, string=s):
 					if s == 'dump': self.add(DUMP(info=token))
+					elif s == 'udump': self.add(UDUMP(info=token))
+					elif s == 'hexdump': self.add(HEXDUMP(info=token))
 					elif s == 'dup': self.add(DUP(info=token))
 					elif s == 'exit': self.add(EXIT(info=token))
 					elif s == 'if': self.add(IF(info=token))
@@ -374,20 +402,18 @@ class Program:
 					elif s == 'while': self.add(WHILE(info=token))
 					elif s == 'do': self.add(DO(info=token))
 					elif s == 'end': self.add(END(info=token))
+					elif s == 'mem': self.add(MEM(info=token))
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.STRING, string=s):
 					raise UnknownToken(token)
 		self.process_flow_control(iter(self.instructions))
 #		for token in self.instructions:
-#			if token.type == TokenTypes.OP_END:
-#				print(token.value[0])
-#				print(token.value[1])
-#				print(token.value[2])
+#			print(token)
 #		exit()
 		return self
 	
 	def process_flow_control(self, iterator):
-		assert TokenTypes.OP_COUNT.value == 20, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 23, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		stack = []
 		for pos, token in enumerate(iterator):
 			if token.type == TokenTypes.OP_IF:
@@ -427,6 +453,7 @@ class Program:
 		skip = 0
 		while self.pointer < len(self.instructions):
 			self.pointer += self.engine.step(self.instructions[self.pointer]) + 1
+		self.engine.close()
 
 #		for i in self.instructions:
 #			if skip:
