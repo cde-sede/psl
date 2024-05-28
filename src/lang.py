@@ -3,6 +3,7 @@ from enum import Enum, auto
 from abc import ABC, abstractmethod
 from typing import Optional, Any
 
+from functools import cached_property
 import subprocess
 import sys
 import os
@@ -54,6 +55,8 @@ class TokenTypes(Enum):
 	OP_END		= iota()
 
 	OP_MEM		= iota()
+	OP_STORE	= iota()
+	OP_LOAD		= iota()
 
 	OP_EXIT		= iota()
 	OP_COUNT	= iota()
@@ -100,133 +103,234 @@ def WHILE(info=None) -> Token: return Token(TokenTypes.OP_WHILE, info=info)
 def DO(info=None) -> Token: return Token(TokenTypes.OP_DO, info=info)
 def END(info=None) -> Token: return Token(TokenTypes.OP_END, info=info)
 def MEM(info=None) -> Token: return Token(TokenTypes.OP_MEM, info=info)
+def STORE(info=None) -> Token: return Token(TokenTypes.OP_STORE, info=info)
+def LOAD(info=None) -> Token: return Token(TokenTypes.OP_LOAD, info=info)
 def EXIT(code: int=0, info=None) -> Token: return Token(TokenTypes.OP_EXIT, value=code, info=info)
 
+
+class Instruction(ABC):
+	@abstractmethod
+	def align(self, largest) -> str:
+		...
+
+	@cached_property
+	def size(self) -> int:
+		...
+
+	def __mod__(self, x: int):
+		return f"{self.align(x)}\n"
+
+class Comment(Instruction):
+	def __init__(self, string):
+		self.string = string
+
+	def align(self, largest: int) -> str:
+		return f"\t; {self.string}"
+
+	@cached_property
+	def size(self) -> int:
+		return -1
+
+class ASM(Instruction):
+	def __init__(self, ins):
+		self.ins = ins
+
+	def align(self, largest: int) -> str:
+		return f"\t{self.ins}"
+
+	@cached_property
+	def size(self) -> int:
+		return len(self.ins) + 1
+
+class ASM1(Instruction):
+	def __init__(self, ins, arg0):
+		self.ins = ins
+		self.arg0 = arg0
+
+	def align(self, largest: int) -> str:
+		return f"\t{self.ins: <{largest}}{self.arg0}"
+
+	@cached_property
+	def size(self) -> int:
+		return len(self.ins) + 1
+
+class ASM2(Instruction):
+	def __init__(self, ins, arg0, arg1):
+		self.ins = ins
+		self.arg0 = arg0
+		self.arg1 = arg1
+
+	def align(self, largest: int) -> str:
+		return f"\t{self.ins: <{largest}}{self.arg0},{self.arg1}"
+
+	@cached_property
+	def size(self) -> int:
+		return len(self.ins) + 1
+
+class Label(Instruction):
+	def __init__(self, name):
+		self.name = name
+
+	def align(self, largest: int) -> str:
+		return f"{self.name}:"
+
+	@cached_property
+	def size(self) -> int:
+		return -1
 
 class Compiler:
 	def __init__(self, buffer):
 		self.buffer = buffer
-		self.buffer.write("extern __dump\n")
-		self.buffer.write("extern __udump\n")
-		self.buffer.write("extern __hexdump\n")
-		self.buffer.write("segment .data\n")
-		self.buffer.write("segment .text\n")
-		self.buffer.write("global _start\n\n")
-		self.buffer.write("_start:\n")
+		self._code = []
+		self.block("SLANG COMPILED PROGRAM")
+		self.asm1('extern', '__dump')
+		self.asm1('extern', '__udump')
+		self.asm1('extern', '__hexdump')
+		self.asm1('segment', '.text')
+		self.asm1('global', '_start')
+		self.label('\n_start')
 
+	def block(self, comment):
+		self._code.append([Comment(comment)])
+
+	def label(self, name):
+		self._code[-1].append(Label(name))
+
+	def asm(self, ins):
+		self._code[-1].append(ASM(ins))
+	
+	def asm1(self, ins, arg):
+		self._code[-1].append(ASM1(ins, arg))
+
+	def asm2(self, ins, arg1, arg2):
+		self._code[-1].append(ASM2(ins, arg1, arg2))
+		
 	def call_cfunction(self, name: str, args: list[Any | None]):
 		"""  x86 arg registers
 		arg0 (%rdi)	arg1 (%rsi)	arg2 (%rdx)	arg3 (%r10)	arg4 (%r8)	arg5 (%r9)
 		"""
 
-		self.buffer.write(f"  ; {name} {args}\n")
+		self.block(f"{name} {args}")
 		registers = ["rdi", "rsi", "rdx", "r10", "r8", "r9"]
 		if len(args) < 7:
 			for reg, arg in reversed([*zip(registers, args)]):
 				if arg is None:
-					self.buffer.write(f"  pop    {reg}\n")
+					self.asm1("pop", f"{reg}")
 				else:
-					self.buffer.write(f"  mov    {reg},{arg}\n")
+					self.asm2("mov", f"{reg}", f"{arg}")
 
-		self.buffer.write(f"  push   rbp\n")
-		self.buffer.write(f"  mov    rbp,rsp\n")
-		self.buffer.write(f"  call   {name}\n")
-		self.buffer.write(f"  pop    rbp\n")
+		self.asm1("push", "rbp")
+		self.asm2("sub", "rsp", "8")
+		self.asm2("mov", "rbp", "rsp")
+		self.asm1("call", f"{name}")
+		self.asm2("add", "rsp", "8")
+		self.asm1("pop", "rbp")
 
 	def step(self, instruction: Token):
-		assert TokenTypes.OP_COUNT.value == 23, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 25, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		match instruction:
 			case Token(type=TokenTypes.OP_PUSH, value=val):
-				self.buffer.write(f"  ; push {val}\n")
-				self.buffer.write(f"  push   {val:.0f}\n")
+				self.block("push")
+				self.asm1("push", f"{val:.0f}")
+
 			case Token(type=TokenTypes.OP_POP, value=val):
-				self.buffer.write(f"  ; pop\n")
-				self.buffer.write(f"  ; NOT YET IMPLEMENTED\n")
+				self.block("pop")
+				raise RuntimeError("Not yet implemented")
+
 			case Token(type=TokenTypes.OP_DUP, value=val):
-				self.buffer.write(f"  ; pop\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  push   rax\n")
-				self.buffer.write(f"  push   rax\n")
+				self.block("dup")
+				self.asm1("pop", "rax")
+				self.asm1("push", "rax")
+				self.asm1("push", "rax")
+
 			case Token(type=TokenTypes.OP_PLUS, value=val):
-				self.buffer.write(f"  ; plus\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  add    rax,rbx\n")
-				self.buffer.write(f"  push   rax\n")
+				self.block("plus")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("add", "rax", "rbx")
+				self.asm1("push", "rax")
+
 			case Token(type=TokenTypes.OP_MUL, value=val):
-				self.buffer.write(f"  ; mul\n")
-				self.buffer.write(f"  pop    rcx\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  mul    rcx\n")
-				self.buffer.write(f"  push   rax\n")
+				self.block("mul")
+				self.asm1("pop", "rcx")
+				self.asm1("pop", "rax")
+				self.asm1("mul", "rcx")
+				self.asm1("push", "rax")
+
 			case Token(type=TokenTypes.OP_DIV, value=val):
-				self.buffer.write(f"  ; div\n")
-				self.buffer.write(f"  xor    edx,edx\n")
-				self.buffer.write(f"  pop    rsi\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  div    rsi\n")
-				self.buffer.write(f"  push   rax\n")
+				self.block("div")
+				self.asm2("xor", "edx", "edx")
+				self.asm1("pop", "rsi")
+				self.asm1("pop", "rax")
+				self.asm1("div", "rsi")
+				self.asm1("push", "rax")
+
 			case Token(type=TokenTypes.OP_MINUS, value=val):
-				self.buffer.write(f"  ; minus\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  sub    rbx,rax\n")
-				self.buffer.write(f"  push   rbx\n")
+				self.block("minus")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("sub", "rbx", "rax")
+				self.asm1("push", "rbx")
 
 			case Token(type=TokenTypes.OP_EQ, value=val):
-				self.buffer.write(f"  ; eq\n")
-				self.buffer.write(f"  xor    rcx,rcx\n")
-				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmove  rcx,rdx\n")
-				self.buffer.write(f"  push   rcx\n")
+				self.block("eq")
+				self.asm2("xor", "rcx", "rcx")
+				self.asm2("mov", "rdx", "1")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("cmp", "rbx", "rax")
+				self.asm2("cmove", "rcx", "rdx")
+				self.asm1("push", "rcx")
+
 			case Token(type=TokenTypes.OP_NE, value=val):
-				self.buffer.write(f"  ; ne\n")
-				self.buffer.write(f"  xor    rcx,rcx\n")
-				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmovne rcx,rdx\n")
-				self.buffer.write(f"  push   rcx\n")
+				self.block("ne")
+				self.asm2("xor", "rcx", "rcx")
+				self.asm2("mov", "rdx", "1")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("cmp", "rbx", "rax")
+				self.asm2("cmovne", "rcx", "rdx")
+				self.asm1("push", "rcx")
+
 			case Token(type=TokenTypes.OP_GT, value=val):
-				self.buffer.write(f"  ; gt\n")
-				self.buffer.write(f"  xor    rcx,rcx\n")
-				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmovg  rcx,rdx\n")
-				self.buffer.write(f"  push   rcx\n")
+				self.block("ne")
+				self.asm2("xor", "rcx", "rcx")
+				self.asm2("mov", "rdx", "1")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("cmp", "rbx", "rax")
+				self.asm2("cmovg", "rcx", "rdx")
+				self.asm1("push", "rcx")
+
 			case Token(type=TokenTypes.OP_GE, value=val):
-				self.buffer.write(f"  ; ge\n")
-				self.buffer.write(f"  xor    rcx,rcx\n")
-				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmovge rcx,rdx\n")
-				self.buffer.write(f"  push   rcx\n")
+				self.block("ne")
+				self.asm2("xor", "rcx", "rcx")
+				self.asm2("mov", "rdx", "1")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("cmp", "rbx", "rax")
+				self.asm2("cmovge", "rcx", "rdx")
+				self.asm1("push", "rcx")
+
 			case Token(type=TokenTypes.OP_LT, value=val):
-				self.buffer.write(f"  ; lt\n")
-				self.buffer.write(f"  xor    rcx,rcx\n")
-				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmovl  rcx,rdx\n")
-				self.buffer.write(f"  push   rcx\n")
+				self.block("ne")
+				self.asm2("xor", "rcx", "rcx")
+				self.asm2("mov", "rdx", "1")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("cmp", "rbx", "rax")
+				self.asm2("cmovl", "rcx", "rdx")
+				self.asm1("push", "rcx")
+
 			case Token(type=TokenTypes.OP_LE, value=val):
-				self.buffer.write(f"  ; le\n")
-				self.buffer.write(f"  xor    rcx,rcx\n")
-				self.buffer.write(f"  mov    rdx,1\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  pop    rbx\n")
-				self.buffer.write(f"  cmp    rbx,rax\n")
-				self.buffer.write(f"  cmovle rcx,rdx\n")
-				self.buffer.write(f"  push   rcx\n")
+				self.block("ne")
+				self.asm2("xor", "rcx", "rcx")
+				self.asm2("mov", "rdx", "1")
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm2("cmp", "rbx", "rax")
+				self.asm2("cmovle", "rcx", "rdx")
+				self.asm1("push", "rcx")
 
 			case Token(type=TokenTypes.OP_DUMP, value=val):
 				self.call_cfunction("__dump", [None])
@@ -238,53 +342,73 @@ class Compiler:
 				self.call_cfunction("__hexdump", [None])
 
 			case Token(type=TokenTypes.OP_EXIT, value=val):
-				self.buffer.write(f"  ; EXIT\n")
-				self.buffer.write(f"  mov    rax,60\n")
-				self.buffer.write(f"  mov    rdi,{val}\n")
-				self.buffer.write(f"  syscall\n")
+				self.block("EXIT")
+				self.asm2("mov", "rax", "60")
+				self.asm2("mov", "rdi", f"{val}")
+				self.asm("syscall")
 
 			case Token(type=TokenTypes.OP_IF, value=val):
-				self.buffer.write(f"  ; if\n")
-				self.buffer.write(f"{instruction.label()}:\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  test   rax,rax\n")
-				self.buffer.write(f"  jz     {val[1].label()}\n")
+				self.block("IF")
+				self.label(instruction.label())
+				self.asm1("pop", "rax")
+				self.asm2("test", "rax", "rax")
+				self.asm1("jz", f"{val[1].label()}")
 
 			case Token(type=TokenTypes.OP_ELSE, value=val):
-				self.buffer.write(f"  ; else\n")
-				self.buffer.write(f"  jmp    {val[1].label()}\n")
-				self.buffer.write(f"{instruction.label()}:\n")
+				self.block("ELSE")
+				self.asm1("jmp", f"{val[1].label()}")
+				self.label(instruction.label())
+				
 
 			case Token(type=TokenTypes.OP_WHILE, value=val):
-				self.buffer.write(f"  ; while\n")
-				self.buffer.write(f"{instruction.label()}:\n")
+				self.block("WHILE")
+				self.label(instruction.label())
 
 			case Token(type=TokenTypes.OP_DO, value=val):
-				self.buffer.write(f"  ; do\n")
-				self.buffer.write(f"{instruction.label()}:\n")
-				self.buffer.write(f"  pop    rax\n")
-				self.buffer.write(f"  test   rax,rax\n")
-				self.buffer.write(f"  jz     {val[1].label()}\n")
-
+				self.block("DO")
+				self.label(instruction.label())
+				self.asm1("pop", "rax")
+				self.asm2("test", "rax", "rax")
+				self.asm1("jmp", f"{val[1].label()}")
+				
 			case Token(type=TokenTypes.OP_END, value=val):
-				self.buffer.write(f"  ; end\n")
+				self.block("END")
 				if val[2].type in [TokenTypes.OP_WHILE,]:
-					self.buffer.write(f"  jmp    {val[2].label()}\n")
-
-				self.buffer.write(f"{instruction.label()}:\n")
+					self.asm1("jmp", f"{val[2].label()}")
 
 			case Token(type=TokenTypes.OP_MEM, value=val):
-				self.buffer.write(f"  ; mem\n")
-				self.buffer.write(f"  push   mem\n")
+				self.block("mem")
+				self.asm1("push", "mem")
 				
+			case Token(type=TokenTypes.OP_STORE, value=val):
+				self.block("store")
+				self.asm1("pop", "rbx")
+				self.asm1("pop", "rax")
+				self.asm2("mov", "byte [rax]", "bl")
+
+			case Token(type=TokenTypes.OP_LOAD, value=val):
+				self.block("load")
+				self.asm1("pop", "rbx")
+				self.asm1("pop", "rax")
+				self.asm2("mov", "bl", "byte [rax]")
+				self.asm1("push", "rbx")
+
 			case _:
 				print(instruction)
 				raise Exception
 		return 0
 
 	def close(self):
-		self.buffer.write(f"segment .bss\n")
-		self.buffer.write(f"mem: resb {MEM_CAPACITY}\n")
+		self.block("MEMORY")
+		self.asm1("segment", ".bss")
+		self.label("mem")
+		self.asm1("resb", f"{MEM_CAPACITY}")
+
+		align = max([j.size for i in self._code for j in i])
+		for i in self._code:
+			for j in i:
+				self.buffer.write(j % align)
+			self.buffer.write('\n')
 
 class Interpreter:
 	def __init__(self):
@@ -372,7 +496,7 @@ class Program:
 
 	@classmethod
 	def frombuffer(cls, buffer):
-		assert TokenTypes.OP_COUNT.value == 23, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 25, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		tokens = tokenize.generate_tokens(buffer.readline)
 		self = cls()
 		for token in tokens:
@@ -403,6 +527,8 @@ class Program:
 					elif s == 'do': self.add(DO(info=token))
 					elif s == 'end': self.add(END(info=token))
 					elif s == 'mem': self.add(MEM(info=token))
+					elif s == 'store': self.add(STORE(info=token))
+					elif s == 'load': self.add(LOAD(info=token))
 					else: raise UnknownToken(token)
 				case tokenize.TokenInfo(type=tokenize.STRING, string=s):
 					raise UnknownToken(token)
@@ -413,7 +539,7 @@ class Program:
 		return self
 	
 	def process_flow_control(self, iterator):
-		assert TokenTypes.OP_COUNT.value == 23, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
+		assert TokenTypes.OP_COUNT.value == 25, f"Not all operators are handled {TokenTypes.OP_COUNT.value}"
 		stack = []
 		for pos, token in enumerate(iterator):
 			if token.type == TokenTypes.OP_IF:
