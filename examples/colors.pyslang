@@ -1,0 +1,43 @@
+macro write 1 1 syscall3 drop end
+
+macro itoa
+	dup 0 != if
+		0 swap
+		while dup 0 != do
+			10 /% '0' + swap
+		end drop
+
+		mem
+		while over 0 != do
+			swap dup2 store drop
+			1 +
+		end
+		swap drop
+		dup 0 .
+		mem - mem
+	else
+		drop mem '0' . mem 1 + 0 .
+		1 mem
+	end
+end
+
+macro ANSI_COLOR
+	"\033[38;2;" write
+	itoa write ";" write
+	itoa write ";" write
+	itoa write "m" write
+end
+macro ANSI_RESET
+	"\033[0m"
+end
+
+0 while dup 255 < do
+	0 while dup 255 < do
+		dup2 255 ANSI_COLOR "0" write ANSI_RESET write
+		16 +
+	end drop
+	"\n" write
+	16 +
+end drop
+
+exit

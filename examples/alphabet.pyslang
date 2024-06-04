@@ -1,0 +1,12 @@
+0 while dup 26 < do
+	dup dup
+	97 +
+	swap mem + swap
+	.
+	1 +
+end
+pop
+
+1 1 mem 26 syscall3
+
+exit

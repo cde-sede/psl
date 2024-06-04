@@ -1,0 +1,32 @@
+macro SIZE 15 end
+macro LOOP SIZE 2 - end
+macro write
+	1 1 syscall3 drop
+end
+
+mem LOOP + 1 .
+
+0 while dup LOOP < do
+	0 while dup SIZE < do
+		dup mem + , if
+			"*" write
+		else
+			" " write
+		end
+		1 +
+	end drop
+	"\n" write
+	mem     , 1 << mem 1 + , |
+
+	1 while dup LOOP < do
+		swap 1 << 7 &
+		over mem + 1 + , |
+		dup2 110 swap >> 1 &
+		swap mem + swap .
+		swap
+		1 +
+	end drop drop
+	1 +
+end drop
+
+exit
