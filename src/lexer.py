@@ -106,12 +106,13 @@ class TokenTypes(Enum):
 
 	TOKEN_COUNT	 = auto()
 
-class TokenInfo(collections.namedtuple("TokenInfo", "type string start end line")):
+class TokenInfo(collections.namedtuple("TokenInfo", "type string start end line file")):
 	type: TokenTypes
 	string: str
 	start: tuple[int, int]
 	end: tuple[int, int]
 	line: str
+	file: str = ''
 
 	def __repr__(self) -> str:
 		return f"TokenInfo(type={self.type}, string={self.string!r}, start={self.start!r}, end={self.end!r}, line={self.line!r})"
@@ -175,51 +176,56 @@ def _tokenize(f, *, debug=False) -> Iterator[TokenInfo]:
 		while index < len(line):
 			if r := re.match(NUMBER_REG, line[index:]):
 				yield (t := TokenInfo(
-					TokenTypes.NUMBER,
-					r.groups()[1],
-					(line_number, index + len(r.groups()[0])),
-					(line_number, index + r.span()[1]),
-					line,
+					type=TokenTypes.NUMBER,
+					string=r.groups()[1],
+					start=(line_number, index + len(r.groups()[0])),
+					end=(line_number, index + r.span()[1]),
+					line=line,
+					file=f.name
 				))
 				if debug: print(t)
 				index += r.span()[1]
 			elif r := re.match(STRING_REG, line[index:]):
 				yield (t := TokenInfo(
-					TokenTypes.STRING,
-					r.groups()[1],
-					(line_number, index + len(r.groups()[0])),
-					(line_number, index + r.span()[1]),
-					line,
+					type=TokenTypes.STRING,
+					string=r.groups()[1],
+					start=(line_number, index + len(r.groups()[0])),
+					end=(line_number, index + r.span()[1]),
+					line=line,
+					file=f.name
 				))
 				if debug: print(t)
 				index += r.span()[1]
 			elif r := re.match(CHAR_REG, line[index:]):
 				yield (t := TokenInfo(
-					TokenTypes.CHAR,
-					r.groups()[1],
-					(line_number, index + len(r.groups()[0])),
-					(line_number, index + r.span()[1]),
-					line,
+					type=TokenTypes.CHAR,
+					string=r.groups()[1],
+					start=(line_number, index + len(r.groups()[0])),
+					end=(line_number, index + r.span()[1]),
+					line=line,
+					file=f.name
 				))
 				if debug: print(t)
 				index += r.span()[1]
 			elif r := re.match(OP_REG, line[index:]):
 				yield (t := TokenInfo(
-					TokenTypes.OP,
-					r.groups()[1],
-					(line_number, index + len(r.groups()[0])),
-					(line_number, index + r.span()[1]),
-					line,
+					type=TokenTypes.OP,
+					string=r.groups()[1],
+					start=(line_number, index + len(r.groups()[0])),
+					end=(line_number, index + r.span()[1]),
+					line=line,
+					file=f.name
 				))
 				if debug: print(t)
 				index += r.span()[1]
 			elif r := re.match(WORD_REG, line[index:]):
 				yield (t := TokenInfo(
-					TokenTypes.WORD,
-					r.groups()[1],
-					(line_number, index + len(r.groups()[0])),
-					(line_number, index + r.span()[1]),
-					line,
+					type=TokenTypes.WORD,
+					string=r.groups()[1],
+					start=(line_number, index + len(r.groups()[0])),
+					end=(line_number, index + r.span()[1]),
+					line=line,
+					file=f.name
 				))
 				if debug: print(t)
 				index += r.span()[1]
@@ -229,16 +235,21 @@ def _tokenize(f, *, debug=False) -> Iterator[TokenInfo]:
 					if not r:
 						raise ValueError(line, index)
 					raise InvalidSyntax(TokenInfo(
-						TokenTypes.WORD,
-						r.groups()[1],
-						(line_number, index + len(r.groups()[0])),
-						(line_number, index + r.span()[1]),
-						line,
+						type=TokenTypes.WORD,
+						string=r.groups()[1],
+						start=(line_number, index + len(r.groups()[0])),
+						end=(line_number, index + r.span()[1]),
+						line=line,
+						file=f.name
 					))
 				else:
 					yield (t := TokenInfo(
-						TokenTypes.NEW_LINE,
-						'\n', (line_number, index), (line_number, index + 1), line
+						type=TokenTypes.NEW_LINE,
+						string='\n',
+						start=(line_number, index),
+						end=(line_number, index + 1),
+						line=line,
+						file=f.name
 					))
 					if debug: print(t)
 				break

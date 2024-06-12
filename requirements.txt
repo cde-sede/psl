@@ -1,0 +1,1 @@
+tester @ git+https://github.com/cde-sede/tester@master

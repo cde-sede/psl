@@ -4,7 +4,8 @@ macro printline
 	dup strlen swap write
 end
 
-while dup 0 != do
+swap drop
+while dup 1 != do
 	swap printline
 	"\n" write
 	1 -

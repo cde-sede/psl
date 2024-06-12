@@ -653,7 +653,6 @@ class Interpreter(Engine):
 		self.memory = bytearray(1 + MEM_CAPACITY + STR_CAPACITY)
 		self.ptr = 1
 		self.buffer = buffer
-		self.setargv(sys.modules['__main__'].argv)
 
 	def setargv(self, av):
 		for i in av[::-1]:

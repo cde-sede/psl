@@ -2,6 +2,7 @@ from typing import Optional, TextIO, Type
 from pathlib import Path
 
 import os
+import sys
 import subprocess
 import shutil
 
@@ -439,12 +440,13 @@ class Program:
 		self.engine.close()
 		raise InvalidSyntax(self.instructions[-1].info, "Program was not exited properly")
 
-def callcmd(cmd, verbose=False):
+def callcmd(cmd, verbose=False, devnull=True):
 	if verbose:
 		print("CMD:", cmd)
-		return subprocess.call(cmd)
-	else:
+	if devnull:
 		return subprocess.call(cmd, stdout=subprocess.DEVNULL)
+	else:
+		return subprocess.call(cmd)
 
 def fclean(*, verbose=False):
 	objs = Path("objs")
@@ -456,71 +458,80 @@ def fclean(*, verbose=False):
 		pass
 	callcmd(["make", "-C", "src/cfunc/", "fclean"], verbose=verbose)
 
-def main(*, source: str | Path,
+def trace(error):
+	token: TokenInfo = error.args[0]
+	msg = error.args[1]
+	print(f"\033[31mError: {token.file} line {token.start[0] + 1}: {error.__class__.__name__}:\033[0m\n")
+	print(token.error())
+	print(msg)
+#	print(token)
+
+def compile(*, source: str | Path,
 		 output: str | Path | TextIO,
+		 temp: str | Path,
+		 verbose: bool=False,
 		 includes: list[str],
-		 engine: Type[Engine],
 		 execution: bool=False,
-		 debug: bool=False,
-		 verbose: bool=False) -> int:
+		 argv: list[str],) -> int:
+	with open(source, 'r') as f:
+		try:
+			p = Program.frombuffer(f, debug=False, path=source, includes=[Path(i) for i in includes])
+		except LangExceptions as e:
+			trace(e)
+			return -1
+
+	objs = Path(temp)
+	if not objs.exists():
+		objs.mkdir()
+
+	with open(objs / "intermediary.asm", 'w') as f:
+		p.engine = Compiler(f)
+		try:
+			code = p.run()
+
+		except LangExceptions as e:
+			trace(e)
+			return -1
+
+	if e:=callcmd(["make", "-C", "src/cfunc/"], verbose=verbose, devnull=True):
+		raise MakeException(e)
+	if e:=callcmd(["nasm", "-f", "elf64", "objs/intermediary.asm", "-o", "objs/intermediary.o"], verbose=verbose, devnull=True):
+		raise NASMException(e)
+	if e:=callcmd(["ld", "src/cfunc/objs/dump.o", "objs/intermediary.o", "-lc", "-I", "/lib64/ld-linux-x86-64.so.2", "-o", output ], verbose=verbose, devnull=True):
+		raise LinkerException(e)
+
+	if execution:
+		return callcmd([f"./{output}", *argv], verbose=verbose, devnull=False)
+	else:
+		return code
+	return 0
+
+def interpret(*, source: str | Path,
+		 includes: list[str],
+		 argv: list[str],
+		 output: str | Path | TextIO) -> int:
 
 	with open(source, 'r') as f:
 		try:
-			p = Program.frombuffer(f, debug=debug, path=source, includes=[Path(i) for i in includes])
+			p = Program.frombuffer(f, debug=False, path=source, includes=[Path(i) for i in includes])
 		except LangExceptions as e:
-			token: TokenInfo = e.args[0]
-			msg = e.args[1]
-			print(f"\033[31mError: line {token.start[0] + 1}: {e.__class__.__name__}:\033[0m\n")
-			print(token.error())
-			print(msg)
-#				print(token)
+			trace(e)
 			return -1
 
-	if engine == Interpreter:
-		try:
-			if isinstance(output, (str, Path)):
-				with open(output, 'w') as f:
-					p.engine = Interpreter(f)
-					code = p.run()
-			else:
-				p.engine = Interpreter(output)
+	if output == 'stdout':
+		output = sys.stdout
+	try:
+		if isinstance(output, (str, Path)):
+			with open(output, 'w') as f:
+				p.engine = Interpreter(f)
+				p.engine.setargv(argv)
 				code = p.run()
-		except LangExceptions as e:
-			token: TokenInfo = e.args[0]
-			msg = e.args[1]
-			print(f"\033[31mError: line {token.start[0] + 1}: {e.__class__.__name__}:\033[0m\n")
-			print(token.error())
-			print(msg)
-			return -1
-		return code
-
-	if engine == Compiler:
-		objs = Path("objs")
-		if not objs.exists():
-			objs.mkdir()
-
-		with open(objs / "intermediary.asm", 'w') as f:
-			p.engine = Compiler(f)
-			try:
-				code = p.run()
-			except LangExceptions as e:
-				token: TokenInfo = e.args[0]
-				msg = e.args[1]
-				print(f"\033[31mError: line {token.start[0] + 1}: {e.__class__.__name__}:\033[0m\n")
-				print(token.error())
-				print(msg)
-	#				print(token)
-				return -1
-
-		if e:=callcmd(["make", "-C", "src/cfunc/"], verbose=verbose):
-			raise MakeException(e)
-		if e:=callcmd(["nasm", "-f", "elf64", "objs/intermediary.asm", "-o", "objs/intermediary.o"], verbose=verbose):
-			raise NASMException(e)
-		if e:=callcmd(["ld", "src/cfunc/objs/dump.o", "objs/intermediary.o", "-lc", "-I", "/lib64/ld-linux-x86-64.so.2", "-o", output ], verbose=verbose):
-			raise LinkerException(e)
-
-		if execution:
-			return callcmd([f"./{output}"], verbose=True)
 		else:
-			return code
-	raise NoEngine
+			p.engine = Interpreter(output)
+			p.engine.setargv(argv)
+			code = p.run()
+
+	except LangExceptions as e:
+		trace(e)
+		return -1
+	return code

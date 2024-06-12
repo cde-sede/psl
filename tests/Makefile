@@ -1,10 +1,18 @@
 SRC = $(wildcard *.pyslang)
 EXE = $(SRC:%.pyslang=%)
 
-all: $(EXE)
+command = python3.12 test.py 
+args = $(EXE:%=-s%)
+
+all: test
+
+test: $(EXE)
+	${command} test -s ${EXE}
+
+save: $(EXE)
 
 %: %.pyslang
-	@python3.12 -m src test -s $< -I./src/std
+	${command} save -s $< -o $@ -a'1' -a'2' -a'3' -a'4'
 
 fclean:
 	rm $(EXE)
