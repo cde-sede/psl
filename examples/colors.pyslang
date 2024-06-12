@@ -28,16 +28,16 @@ macro ANSI_COLOR
 	itoa write "m" write
 end
 macro ANSI_RESET
-	"\033[0m"
+	"\033[0m" write
 end
 
 0 while dup 255 < do
 	0 while dup 255 < do
-		dup2 255 ANSI_COLOR "0" write ANSI_RESET write
+		dup2 255 ANSI_COLOR "0" write ANSI_RESET
 		16 +
 	end drop
 	"\n" write
 	16 +
 end drop
 
-exit
+0 exit

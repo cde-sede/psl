@@ -1,7 +1,7 @@
 "----  +  ----\n" 1 1 syscall3
 2 3 + dump
 "----  -  ----\n" 1 1 syscall3
-3 4 - dump
+4 3 - dump
 "----  *  ----\n" 1 1 syscall3
 4 5 * dump
 "----  /  ----\n" 1 1 syscall3
@@ -10,3 +10,5 @@
 11 6 % dump
 "----  /%  ----\n" 1 1 syscall3
 11 6 /% dump dump
+
+0 exit

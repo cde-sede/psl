@@ -1,6 +1,6 @@
-from enum import Enum
+from enum import Enum, auto
 import uuid
-from typing import Optional, Any
+from typing import Optional, Any, Iterator, TextIO
 from io import StringIO
 import collections
 import re
@@ -9,96 +9,102 @@ import re
 class LangExceptions(Exception):
 	pass
 
-class UnknownToken(LangExceptions):
+class UnknownToken(LangExceptions): pass
+class InvalidSyntax(LangExceptions): pass
+class SymbolRedefined(LangExceptions): pass
+class FileError(LangExceptions): pass
+
+class TypesType(Enum):
 	pass
-class InvalidSyntax(LangExceptions):
-	pass
-class SymbolRedefined(LangExceptions):
-	pass
+class PreprocTypes(TypesType):
+	MACRO		 = auto()
+	INCLUDE		 = auto()
 
+class FlowControl(TypesType):
+	OP_IF		 = auto()
+	OP_ELSE		 = auto()
+	OP_WHILE	 = auto()
+	OP_DO		 = auto()
+	OP_END		 = auto()
+	OP_LABEL	 = auto()
 
-def iota(reset=False, *, v=[-1]):
-	if reset:
-		v[0] = -1
-	v[0] += 1
-	return v[0]
+class Operands(TypesType):
+	OP_PLUS		 = auto()
+	OP_MINUS	 = auto()
+	OP_MUL		 = auto()
+	OP_DIV		 = auto()
+	OP_MOD		 = auto()
+	OP_DIVMOD	 = auto()
 
+	OP_BLSH		 = auto()
+	OP_BRSH		 = auto()
+	OP_BAND		 = auto()
+	OP_BOR		 = auto()
+	OP_BXOR		 = auto()
 
-class OpTypes(Enum):
-	OP_PUSH		 = iota(True)
-	OP_STRING	 = iota()
-	OP_WORD		 = iota()
-	OP_DROP		 = iota()
-	OP_DUP		 = iota()
-	OP_DUP2		 = iota()
-	OP_SWAP		 = iota()
-	OP_OVER		 = iota()
+	OP_EQ		 = auto()
+	OP_NE		 = auto()
+	OP_GT		 = auto()
+	OP_GE		 = auto()
+	OP_LT		 = auto()
+	OP_LE		 = auto()
 
-	OP_PLUS		 = iota()
-	OP_MINUS	 = iota()
-	OP_MUL		 = iota()
-	OP_DIV		 = iota()
-	OP_MOD		 = iota()
-	OP_DIVMOD	 = iota()
+class Intrinsics(TypesType):
+	OP_DROP		 = auto()
+	OP_DUP		 = auto()
+	OP_DUP2		 = auto()
+	OP_SWAP		 = auto()
+	OP_OVER		 = auto()
+	OP_MEM		 = auto()
 
-	OP_BLSH		 = iota()
-	OP_BRSH		 = iota()
-	OP_BAND		 = iota()
-	OP_BOR		 = iota()
-	OP_BXOR		 = iota()
+class OpTypes(TypesType):
+	OP_PUSH		 = auto()
+	OP_STRING	 = auto()
 
-	OP_EQ		 = iota()
-	OP_NE		 = iota()
-	OP_GT		 = iota()
-	OP_GE		 = iota()
-	OP_LT		 = iota()
-	OP_LE		 = iota()
+	OP_WORD		 = auto()
 
-	OP_IF		 = iota()
-	OP_ELSE		 = iota()
-	OP_WHILE	 = iota()
-	OP_DO		 = iota()
-	OP_MACRO	 = iota()
-	OP_END		 = iota()
-	OP_LABEL	 = iota()
+	OP_STORE	 = auto()
+	OP_LOAD		 = auto()
+	OP_STORE16	 = auto()
+	OP_LOAD16	 = auto()
+	OP_STORE32	 = auto()
+	OP_LOAD32	 = auto()
+	OP_STORE64	 = auto()
+	OP_LOAD64	 = auto()
 
-	OP_MEM		 = iota()
-	OP_STORE	 = iota()
-	OP_LOAD		 = iota()
+	OP_DUMP		 = auto()
+	OP_CDUMP	 = auto()
+	OP_UDUMP	 = auto()
+	OP_HEXDUMP	 = auto()
 
-	OP_DUMP		 = iota()
-	OP_CDUMP	 = iota()
-	OP_UDUMP	 = iota()
-	OP_HEXDUMP	 = iota()
-	OP_PRINTLINE = iota()
-	OP_SYSCALL	 = iota()
-	OP_SYSCALL1	 = iota()
-	OP_SYSCALL2	 = iota()
-	OP_SYSCALL3	 = iota()
-	OP_SYSCALL4	 = iota()
-	OP_SYSCALL5	 = iota()
-	OP_SYSCALL6	 = iota()
+	OP_SYSCALL	 = auto()
+	OP_SYSCALL1	 = auto()
+	OP_SYSCALL2	 = auto()
+	OP_SYSCALL3	 = auto()
+	OP_SYSCALL4	 = auto()
+	OP_SYSCALL5	 = auto()
+	OP_SYSCALL6	 = auto()
 
-	OP_RSYSCALL1 = iota()
-	OP_RSYSCALL2 = iota()
-	OP_RSYSCALL3 = iota()
-	OP_RSYSCALL4 = iota()
-	OP_RSYSCALL5 = iota()
-	OP_RSYSCALL6 = iota()
+	OP_RSYSCALL1 = auto()
+	OP_RSYSCALL2 = auto()
+	OP_RSYSCALL3 = auto()
+	OP_RSYSCALL4 = auto()
+	OP_RSYSCALL5 = auto()
+	OP_RSYSCALL6 = auto()
 
-	OP_EXIT		 = iota()
-	OP_COUNT	 = iota()
+	OP_EXIT		 = auto()
+	OP_COUNT	 = auto()
 
 
 class TokenTypes(Enum):
-	NUMBER		 = iota(True)
-	STRING		 = iota()
-	CHAR		 = iota()
-	OP			 = iota()
-	WORD		 = iota()
-	NEW_LINE	 = iota()
+	NUMBER		 = auto()
+	STRING		 = auto()
+	CHAR		 = auto()
+	OP			 = auto()
+	WORD		 = auto()
+	NEW_LINE	 = auto()
 
-	TOKEN_COUNT	 = iota()
+	TOKEN_COUNT	 = auto()
 
 class TokenInfo(collections.namedtuple("TokenInfo", "type string start end line")):
 	type: TokenTypes
@@ -107,49 +113,49 @@ class TokenInfo(collections.namedtuple("TokenInfo", "type string start end line"
 	end: tuple[int, int]
 	line: str
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return f"TokenInfo(type={self.type}, string={self.string!r}, start={self.start!r}, end={self.end!r}, line={self.line!r})"
 
-	def error(self):
+	def error(self) -> str:
 		return f"{self.line}{'': <{self.start[1]}}{'':^<{self.end[1] - self.start[1]}}"
 
 class Token:
 	__slots__ = ("type", "value", "info", "id", "position")
 
-	type: OpTypes
+	type: TypesType
 	value: Any
 	info: Optional[TokenInfo]
 	id: str
 	position: int
 
-	def __init__(self, type: OpTypes, value: Any=None, info=None):
+	def __init__(self, type: TypesType, value: Any=None, info=None):
 		self.value = value
 		self.type = type
 		self.info = info
 		self.id = str(uuid.uuid4())[:8]
 		self.position = -1
 
-	def __repr__(self):
-		return f"{self.type}" #{f" {self.value}" if self.value else ""}"
+	def __repr__(self) -> str:
+		return f"{self.type} {f" {self.value}" if self.value else ""}"
 
-	def label(self):
+	def label(self) -> str:
 		return f"{self.type.name}_{self.id}"
 
-	def copy(self):
+	def copy(self) -> 'Token':
 		return Token(
 			value=self.value,
 			type=self.type,
 			info=self.info,
 		)
 
-NUMBER_REG	= re.compile(r"^(\s*)(\d+)")
+NUMBER_REG	= re.compile(r"^(\s*)(-?\d+)")
 STRING_REG	= re.compile(r"^(\s*)\"(.*)\"")
-OP_REG		= re.compile(r"^(\s*)([^\w\s]+)")
+OP_REG		= re.compile(r"^(\s*)((?:[^\w\s]|\d)+)")
 CHAR_REG	= re.compile(r"^(\s*)'(\\?.)'")
 WORD_REG	= re.compile(r"^(\s*)(\w+)")
 ANY_REG		= re.compile(r"^(\s*)(.+)")
 
-def replace_tabs(s):
+def replace_tabs(s: str) -> Iterator[str]:
 	j = 0
 	for i,c in enumerate(s):
 		if c == '\t':
@@ -160,7 +166,7 @@ def replace_tabs(s):
 			yield c
 			j = (j + 1) % 4
 
-def tokenize(f, *, debug=False):
+def _tokenize(f, *, debug=False) -> Iterator[TokenInfo]:
 	toks = []
 	for line_number, line in enumerate(f):
 		if not line.strip(): continue
@@ -237,9 +243,32 @@ def tokenize(f, *, debug=False):
 					if debug: print(t)
 				break
 
-if __name__ == '__main__':
-	import sys
-	with open(sys.argv[1], 'r') as f:
-		toks = tokenize(f)
+class Tokenize:
+	def __init__(self, buffer: TextIO, *, debug=False, close=False):
+		self.buffer: TextIO = buffer
+		self.debug: bool = debug
+		self.close: bool = close
 
-		print(toks[13])
+		self._extend: list[Iterator] = []
+		
+
+	def __iter__(self):
+		self._tokenize = _tokenize(self.buffer, debug=self.debug)
+		return self
+
+	def __next__(self) -> TokenInfo:
+		if self._extend:
+			try:
+				return next(self._extend[0])
+			except StopIteration:
+				self._extend.pop(0)
+		try:
+			t = next(self._tokenize)
+		except StopIteration:
+			if self.close:
+				self.buffer.close()
+			raise StopIteration
+		return t
+
+	def extend(self, tokens):
+		self._extend.append(tokens)

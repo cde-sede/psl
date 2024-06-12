@@ -30,4 +30,5 @@ mem dup 'h' .
 
 mem 1 1 syscall3
 
-exit
+"Hello, world!\n" 1 1 syscall3
+0 exit

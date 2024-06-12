@@ -5,8 +5,8 @@
 	.
 	1 +
 end
-pop
+drop
 
-1 1 mem 26 syscall3
+1 1 mem 26 rsyscall3
 
-exit
+0 exit

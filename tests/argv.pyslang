@@ -1,0 +1,13 @@
+include "std.pyslang"
+
+macro printline
+	dup strlen swap write
+end
+
+while dup 0 != do
+	swap printline
+	"\n" write
+	1 -
+end
+
+0 exit

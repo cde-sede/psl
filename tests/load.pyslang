@@ -1,0 +1,13 @@
+mem 1123321123 .
+mem , dump
+
+mem 1123321123 .16
+mem ,16 dump
+
+mem 1123321123 .32
+mem ,32 dump
+
+mem 1123321123 .64
+mem ,64 dump
+
+0 exit
