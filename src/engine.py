@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, TextIO, Generator, Iterator
+from typing import Any, TextIO, BinaryIO, Generator, Iterator
 from functools import cached_property
 from queue import LifoQueue, Empty
 
@@ -24,12 +24,15 @@ from .lexer import (
 	FileError,
 )
 
-STR_CAPACITY = 640_000
-MEM_CAPACITY = 640_000
+STR_CAPACITY  = 640_000
+MEM_CAPACITY  = 640_000
+ARGV_CAPACITY = 640_000
 
 
 class Engine(ABC):
 	class ExitFromEngine(Exception): pass
+
+	exited: bool = False
 
 	@abstractmethod
 	def __init__(self, buffer: TextIO):
@@ -155,6 +158,8 @@ class Compiler(Engine):
 		self.asm1('segment', '.text')
 		self.asm1('global', '_start')
 		self.label('\n_start')
+		self.asm2("mov", "qword [ARGS_PTR]", "rsp")
+
 
 	def block(self, comment: str, token: Token | None) -> None:
 		self._code.append([Block(comment)])
@@ -532,7 +537,8 @@ class Compiler(Engine):
 				self.asm("syscall")
 				self.asm1("push", "rax")
 
-				raise self.ExitFromEngine(0)
+				self.exited = True
+#				raise self.ExitFromEngine(0)
 
 			case Token(type=FlowControl.OP_IF, value=val):
 				self.block("IF", instruction)
@@ -567,6 +573,18 @@ class Compiler(Engine):
 			case Token(type=Intrinsics.OP_MEM, value=val):
 				self.block("mem", instruction)
 				self.asm1("push", "mem")
+
+			case Token(type=Intrinsics.OP_ARGC, value=val):
+				self.block("argc", instruction)
+				self.asm2("mov", "rax", "[ARGS_PTR]")
+				self.asm2("mov", "rax", "[rax]")
+				self.asm1("push", "rax")
+
+			case Token(type=Intrinsics.OP_ARGV, value=val):
+				self.block("argc", instruction)
+				self.asm2("mov", "rax", "[ARGS_PTR]")
+				self.asm2("add", "rax", "8")
+				self.asm1("push", "rax")
 
 			case Token(type=OpTypes.OP_STORE, value=val):
 				self.block("store", instruction)
@@ -638,6 +656,8 @@ class Compiler(Engine):
 		
 		self.block("MEMORY", None)
 		self.asm1("segment", ".bss")
+		self.label(f"ARGS_PTR", nl=False)
+		self.asm1("resq", "1")
 		self.label("mem", nl=False)
 		self.asm1("resb", f"{MEM_CAPACITY}")
 
@@ -648,18 +668,44 @@ class Compiler(Engine):
 			self.buffer.write('\n')
 
 class Interpreter(Engine):
-	def __init__(self, buffer: TextIO):
+	def __init__(self, buffer: BinaryIO):
 		self.queue = LifoQueue(-1)
-		self.memory = bytearray(1 + MEM_CAPACITY + STR_CAPACITY)
-		self.ptr = 1
-		self.buffer = buffer
+		self.memory = bytearray(1 + STR_CAPACITY + ARGV_CAPACITY + MEM_CAPACITY)
+
+		self.str_ptr = 1
+		self.argv_ptr = 1 + STR_CAPACITY
+		self.argc = 0
+
+		self.strs: dict[Token, tuple[int, int]] = {}
+
+		self.fds: dict[int, BinaryIO] = {
+			0: sys.stdin.buffer,
+			1: buffer,
+			2: sys.stdout.buffer,
+		}
 
 	def setargv(self, av):
-		for i in av[::-1]:
-			self.memory[self.ptr:self.ptr+len(i)+1] = i.encode("utf8") + b'\0'
-			self.push(self.ptr)
-			self.ptr += len(i) + 1
-		self.push(len(av))
+		for i in av:
+			l, str_ptr = self.set_string(i)
+
+			p = self.argv_ptr + self.argc*8
+
+			assert p + 8 < 1 + STR_CAPACITY + ARGV_CAPACITY, "Argv overflow"
+
+			self.memory[p:p+8] = str_ptr.to_bytes(8, byteorder='little')
+			self.argc += 1
+
+	def set_string(self, s: str) -> tuple[int, int]:
+		value = s.encode('utf8')
+		n = len(value)
+		self.memory[self.str_ptr:self.str_ptr+n] = value
+		self.memory[self.str_ptr+n+1] = 0
+		p = self.str_ptr
+
+		self.str_ptr += n + 1
+
+		assert self.str_ptr < 1 + STR_CAPACITY, "String overflow"
+		return n + 1, p
 
 	def push(self, v: Any): self.queue.put(v)
 	def pop(self) -> Any: return self.queue.get_nowait()
@@ -670,10 +716,13 @@ class Interpreter(Engine):
 				self.queue.put(val)
 
 			case Token(type=OpTypes.OP_STRING, value=val):
-				self.push(len(val))
-				self.push(self.ptr)
-				self.memory[self.ptr:self.ptr+len(val)+1] = val.encode("utf8") + b'\0'
-				self.ptr += len(val) + 1
+				if instruction in self.strs:
+					l, p = self.strs[instruction]
+				else:
+					l, p = self.set_string(val)
+					self.strs[instruction] = (l, p)
+				self.push(l)
+				self.push(p)
 				# push len
 				# push ptr to start of memory
 
@@ -758,18 +807,18 @@ class Interpreter(Engine):
 				self.push(int(self.pop() == self.pop()))
 
 			case Token(type=Operands.OP_NE, value=val):
-				b = self.pop()
 				a = self.pop()
-				self.push(int(a != b))
+				b = self.pop()
+				self.push(int(b != a))
 
 			case Token(type=Operands.OP_GT, value=val):
-				b = self.pop()
 				a = self.pop()
+				b = self.pop()
 				self.push(int(b > a))
 
 			case Token(type=Operands.OP_GE, value=val):
-				b = self.pop()
 				a = self.pop()
+				b = self.pop()
 				self.push(int(b >= a))
 
 			case Token(type=Operands.OP_LT, value=val):
@@ -783,19 +832,19 @@ class Interpreter(Engine):
 				self.push(int(b <= a))
 
 			case Token(type=OpTypes.OP_DUMP, value=val):
-				self.buffer.write(str(self.pop()))
-				self.buffer.write('\n')
+				self.fds[1].write(str(self.pop()).encode('utf8'))
+				self.fds[1].write(b'\n')
 
 			case Token(type=OpTypes.OP_CDUMP, value=val):
-				self.buffer.write(chr(self.pop()))
+				self.fds[1].write(chr(self.pop()).encode('utf8'))
 
 			case Token(type=OpTypes.OP_UDUMP, value=val):
-				self.buffer.write(str(ctypes.c_ulonglong(self.pop()).value))
-				self.buffer.write('\n')
+				self.fds[1].write(str(ctypes.c_ulonglong(self.pop()).value).encode('utf8'))
+				self.fds[1].write(b'\n')
 
 			case Token(type=OpTypes.OP_HEXDUMP, value=val):
-				self.buffer.write(hex(self.pop()))
-				self.buffer.write('\n')
+				self.fds[1].write(hex(self.pop()).encode('utf8'))
+				self.fds[1].write(b'\n')
 
 			case Token(type=OpTypes.OP_SYSCALL, value=val):
 				raise RuntimeError(NotImplemented, instruction)
@@ -812,17 +861,14 @@ class Interpreter(Engine):
 				arg1 = self.pop()
 				arg2 = self.pop()
 				arg3 = self.pop()
-				if syscall == 1:
-					if arg1 == 1:
-						m = self.memory[arg2:arg2+arg3].decode('utf8')
-						self.buffer.write(m)
-						self.push(len(m))
-					elif arg1 == 2:
-						m = self.memory[arg2:arg2+arg3].decode('utf8')
-						sys.stderr.write(m)
-						self.push(len(m))
-					else:
-						raise RuntimeError(NotImplemented, instruction, syscall, arg1, arg2, arg3)
+				if syscall == 0:
+					b = self.fds[arg1].read(arg3)
+					self.memory[arg2:arg2+len(b)] = b
+				elif syscall == 1:
+					m = self.memory[arg2:arg2+arg3].decode('utf8')
+					self.fds[arg1].write(m.encode('utf8'))
+					self.fds[arg1].flush()
+					self.push(len(m))
 				else:
 					raise RuntimeError(NotImplemented, instruction, syscall, arg1, arg2, arg3)
 
@@ -847,17 +893,16 @@ class Interpreter(Engine):
 				arg2 = self.pop()
 				arg1 = self.pop()
 				syscall = self.pop()
-				if syscall == 1:
-					if arg1 == 1:
-						m = self.memory[arg2:arg2+arg3].decode('utf8')
-						self.buffer.write(m)
-						self.push(m)
-					elif arg1 == 2:
-						m = self.memory[arg2:arg2+arg3].decode('utf8')
-						sys.stderr.write(m)
-						self.push(m)
-					else:
-						raise RuntimeError(NotImplemented, instruction, syscall, arg1, arg2, arg3)
+				if syscall == 0:
+					b = self.fds[arg1].read(arg3)
+					self.memory[arg2:arg2+len(b)] = b
+				elif syscall == 1:
+					m = self.memory[arg2:arg2+arg3].decode('utf8')
+					self.fds[arg1].write(m.encode('utf8'))
+					self.fds[arg1].flush()
+					self.push(len(m))
+				else:
+					raise RuntimeError(NotImplemented, instruction, syscall, arg1, arg2, arg3)
 
 			case Token(type=OpTypes.OP_RSYSCALL4, value=val):
 				raise RuntimeError(NotImplemented, instruction)
@@ -893,7 +938,13 @@ class Interpreter(Engine):
 #					return -(val[0] + val[2].value[0])
 
 			case Token(type=Intrinsics.OP_MEM, value=val):
-				self.push(STR_CAPACITY)
+				self.push(1 + STR_CAPACITY + ARGV_CAPACITY)
+
+			case Token(type=Intrinsics.OP_ARGC, value=val):
+				self.push(self.argc)
+
+			case Token(type=Intrinsics.OP_ARGV, value=val):
+				self.push(self.argv_ptr)
 
 			case Token(type=OpTypes.OP_STORE, value=val):
 				value = self.pop()

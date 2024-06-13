@@ -56,6 +56,8 @@ class Intrinsics(TypesType):
 	OP_SWAP		 = auto()
 	OP_OVER		 = auto()
 	OP_MEM		 = auto()
+	OP_ARGC		 = auto()
+	OP_ARGV		 = auto()
 
 class OpTypes(TypesType):
 	OP_PUSH		 = auto()
@@ -112,10 +114,10 @@ class TokenInfo(collections.namedtuple("TokenInfo", "type string start end line 
 	start: tuple[int, int]
 	end: tuple[int, int]
 	line: str
-	file: str = ''
+	file: str
 
 	def __repr__(self) -> str:
-		return f"TokenInfo(type={self.type}, string={self.string!r}, start={self.start!r}, end={self.end!r}, line={self.line!r})"
+		return f"TokenInfo(type={self.type}, string={self.string!r}, start={self.start!r}, end={self.end!r}, line={self.line!r} file={self.file})"
 
 	def error(self) -> str:
 		return f"{self.line}{'': <{self.start[1]}}{'':^<{self.end[1] - self.start[1]}}"

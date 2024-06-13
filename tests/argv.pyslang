@@ -1,14 +1,10 @@
 include "std.pyslang"
 
-macro printline
-	dup strlen swap write
-end
-
-swap drop
-while dup 1 != do
-	swap printline
-	"\n" write
-	1 -
+argv 8 + argc 1 -
+while dup 0 > do
+	over ,64 dup strlen swap stdout write drop
+	"\n" stdout write drop
+	1 - swap 8 + swap
 end
 
 0 exit

@@ -1,6 +1,7 @@
 import tester
 import argparse
 from io import BytesIO
+from pathlib import Path
 
 
 if __name__ == '__main__':
@@ -8,19 +9,38 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	sub = parser.add_subparsers(dest="instruction")
 
-	sread = sub.add_parser("test")
-	sread.add_argument('-s', '--source', required=True, nargs='*')
+	stest = sub.add_parser("test")
+	stest.add_argument('-s', '--source', required=True, nargs='*', action='extend')
 
-	swrite = sub.add_parser("save")
-	swrite.add_argument('-o', '--output', required=True)
-	swrite.add_argument('-s', '--source', required=True)
-	swrite.add_argument('-a', '--args', required=True, nargs='*')
-	swrite.add_argument('-A', '--cargs', nargs='*', default=[])
-	swrite.add_argument('--stdin', default=None)
+	sshow = sub.add_parser("show")
+	sshow.add_argument('-s', '--source', required=True, nargs='*', action='extend')
+
+	ssave = sub.add_parser("save")
+	ssave.add_argument('-o', '--output', required=True)
+	ssave.add_argument('-s', '--source', required=True)
+	ssave.add_argument('-a', '--args', required=True, nargs='*', action='extend')
+	ssave.add_argument('-A', '--cargs', nargs='*', default=[])
+	ssave.add_argument('--stdin', default=None)
 
 	args = parser.parse_args()
 
+	if args.instruction == 'show':
+		for s in args.source:
+			with open(s, 'rb') as f:
+				retc, haltedc, outc, errc, failurec = tester.test(f)
+				reti, haltedi, outi, erri, failurei = tester.test(f)
+				print('---------------')
+				print(f"{retc} {reti}")
+				print('---------------')
+				print(f"{haltedc} {haltedi}")
+				print('---------------')
+				print(f"{outc} {outi}")
+				print('---------------')
+				print(f"{errc} {erri}")
+				print('---------------')
+				print(f"{failurec} {failurei}")
 	if args.instruction == 'test':
+		print(args)
 		for s in args.source:
 			with open(s, 'rb') as f:
 				retc, haltedc, outc, errc, failurec = tester.test(f)
@@ -47,7 +67,8 @@ if __name__ == '__main__':
 		with open(args.output, 'wb') as buffer:
 			tester.save(buffer,
 				  ["python", "-m", "src", "compile",
-				  f"-stests/{args.source}",
+				  f"-s{args.source}",
+				  f"-o{Path(args.source).stem}",
 				  "--exec",
 				  "-I./src/std/",
 				  *[ i for i in args.cargs ],
@@ -56,13 +77,12 @@ if __name__ == '__main__':
 				  args.stdin)
 			tester.save(buffer,
 				  ["python", "-m", "src", "interpret",
-				  f"-stests/{args.source}",
+				  f"-s{args.source}",
 				  "-I./src/std/",
 				  *[ i for i in args.cargs ],
 				  *[ f"-A{i}" for i in args.args ],
 				  ],
 				  args.stdin)
-			buffer.seek(0)
 
 #python
 #test.py

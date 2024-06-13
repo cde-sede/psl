@@ -1,4 +1,4 @@
-from typing import Optional, TextIO, Type
+from typing import Optional, TextIO, BinaryIO, Type
 from pathlib import Path
 
 import os
@@ -84,6 +84,8 @@ def DO(info=None)                -> Token: return Token(FlowControl.OP_DO, info=
 def END(info=None)               -> Token: return Token(FlowControl.OP_END, info=info)
 def LABEL(name, info=None)       -> Token: return Token(FlowControl.OP_LABEL, name, info=info)
 
+def ARGC(info=None)               -> Token: return Token(Intrinsics.OP_ARGC, info=info)
+def ARGV(info=None)               -> Token: return Token(Intrinsics.OP_ARGV, info=info)
 def MEM(info=None)               -> Token: return Token(Intrinsics.OP_MEM, info=info)
 def STORE(info=None)             -> Token: return Token(OpTypes.OP_STORE, info=info)
 def LOAD(info=None)              -> Token: return Token(OpTypes.OP_LOAD, info=info)
@@ -103,45 +105,47 @@ def INCLUDE(info=None)           -> Token: return Token(PreprocTypes.INCLUDE, in
 def unescape_string(s):
 	return s.encode('latin-1', 'backslashreplace').decode('unicode-escape')
 
-BUILTIN_WORDS = [
-	"dump",
-	"udump",
-	"blsh",
-	"brsh",
-	"band",
-	"bor",
-	"bxor",
-	"cdump",
-	"hexdump",
-	"syscall",
-	"syscall1",
-	"syscall2",
-	"syscall3",
-	"syscall4",
-	"syscall5",
-	"syscall6",
-	"rsyscall1",
-	"rsyscall2",
-	"rsyscall3",
-	"rsyscall4",
-	"rsyscall5",
-	"rsyscall6",
-	"drop",
-	"dup",
-	"dup2",
-	"swap",
-	"over",
-	"exit",
-	"if",
-	"else",
-	"while",
-	"do",
-	"macro",
-	"end",
-	"mem",
-	"store",
-	"load",
-]
+#BUILTIN_WORDS = [
+#	"dump",
+#	"udump",
+#	"blsh",
+#	"brsh",
+#	"band",
+#	"bor",
+#	"bxor",
+#	"cdump",
+#	"hexdump",
+#	"syscall",
+#	"syscall1",
+#	"syscall2",
+#	"syscall3",
+#	"syscall4",
+#	"syscall5",
+#	"syscall6",
+#	"rsyscall1",
+#	"rsyscall2",
+#	"rsyscall3",
+#	"rsyscall4",
+#	"rsyscall5",
+#	"rsyscall6",
+#	"drop",
+#	"dup",
+#	"dup2",
+#	"swap",
+#	"over",
+#	"exit",
+#	"if",
+#	"else",
+#	"while",
+#	"do",
+#	"macro",
+#	"end",
+#	"mem",
+#	"argc",
+#	"argv",
+#	"store",
+#	"load",
+#]
 
 
 KEYWORDS = {
@@ -181,6 +185,8 @@ KEYWORDS = {
 	"include":   (lambda val, info: INCLUDE(info=info)),
 	"end":       (lambda val, info: END(info=info)),
 	"mem":       (lambda val, info: MEM(info=info)),
+	"argc":      (lambda val, info: ARGC(info=info)),
+	"argv":      (lambda val, info: ARGV(info=info)),
 	"store":     (lambda val, info: STORE(info=info)),
 	"load":      (lambda val, info: LOAD(info=info)),
 }
@@ -351,8 +357,8 @@ class Program:
 			raise InvalidSyntax(tokens[0].info, "`macro` requires a name")
 		if tokens[1].type != OpTypes.OP_WORD:
 			raise InvalidSyntax(tokens[1].info, f"`macro` name must be a word not `{tokens[1].type.name}`")
-		if tokens[1].info.string in BUILTIN_WORDS:
-			raise SymbolRedefined(tokens[1].info, "Is a builtin symbol")
+#		if tokens[1].info.string in BUILTIN_WORDS:
+#			raise SymbolRedefined(tokens[1].info, "Is a builtin symbol")
 		if tokens[1].info.string in self.symbols:
 			raise SymbolRedefined(tokens[1].info, "Has already been defined")
 			
@@ -428,6 +434,8 @@ class Program:
 		return self
 
 	def run(self) -> int:
+		assert len(self.instructions) != 0, "Empty program"
+
 		if self.engine is None:
 			raise NoEngine("Add engine before running")
 		skip = 0
@@ -438,7 +446,9 @@ class Program:
 				self.engine.close()
 				return e.args[0]
 		self.engine.close()
-		raise InvalidSyntax(self.instructions[-1].info, "Program was not exited properly")
+		if self.engine.exited == False:
+			raise InvalidSyntax(self.instructions[-1].info, "Program was not exited properly")
+		return 0
 
 def callcmd(cmd, verbose=False, devnull=True):
 	if verbose:
@@ -464,7 +474,7 @@ def trace(error):
 	print(f"\033[31mError: {token.file} line {token.start[0] + 1}: {error.__class__.__name__}:\033[0m\n")
 	print(token.error())
 	print(msg)
-#	print(token)
+#	raise error
 
 def compile(*, source: str | Path,
 		 output: str | Path | TextIO,
@@ -509,7 +519,7 @@ def compile(*, source: str | Path,
 def interpret(*, source: str | Path,
 		 includes: list[str],
 		 argv: list[str],
-		 output: str | Path | TextIO) -> int:
+		 output: str | Path | BinaryIO) -> int:
 
 	with open(source, 'r') as f:
 		try:
@@ -519,10 +529,10 @@ def interpret(*, source: str | Path,
 			return -1
 
 	if output == 'stdout':
-		output = sys.stdout
+		output = sys.stdout.buffer
 	try:
 		if isinstance(output, (str, Path)):
-			with open(output, 'w') as f:
+			with open(output, 'wb') as f:
 				p.engine = Interpreter(f)
 				p.engine.setargv(argv)
 				code = p.run()

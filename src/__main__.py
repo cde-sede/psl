@@ -32,9 +32,9 @@ if __name__ == '__main__':
 						  help="Displays every command executed")
 	sub_compile.add_argument('-e', '--exec', action="store_true",
 						  help="Automatically executes the resulting executable")
-	sub_compile.add_argument('-I', '--include', nargs='*', default=[],
+	sub_compile.add_argument('-I', '--include', nargs='*', default=[], action='extend',
 						  help="Adds every -I --include folder provided to the search path for includes, if a file is present in multiple path, the first one is used, by default, the source folder, cwd and compiler path are added.")
-	sub_compile.add_argument('-A', '--argv', nargs='*', default=[],
+	sub_compile.add_argument('-A', '--argv', nargs='*', default=[], action='extend',
 						  help="If -e --exec flag, adds every value provided as an argv, otherwise ignored")
 
 
@@ -42,9 +42,9 @@ if __name__ == '__main__':
 						  help="The source code")
 	sub_interpret.add_argument('-o', '--output', default='stdout',
 						  help="Adds every -I --include folder provided to the search path for includes, if a file is present in multiple path, the first one is used")
-	sub_interpret.add_argument('-I', '--include', nargs='*', default=[],
+	sub_interpret.add_argument('-I', '--include', nargs='*', default=[], action='extend',
 						  help="Adds every -I --include folder provided to the search path for includes, if a file is present in multiple path, the first one is used")
-	sub_interpret.add_argument('-A', '--argv', nargs='*', default=[],
+	sub_interpret.add_argument('-A', '--argv', nargs='*', default=[], action='extend',
 						  help="Adds every value provided as an argv, by default the source's basename is prepended as a path")
 
 	sub_lex.add_argument('-s', '--source', required=True,
@@ -93,8 +93,6 @@ if __name__ == '__main__':
 
 	if args.engine == 'interpret':
 		interpret(source=args.source, includes=args.include, argv=[f"./{Path(args.source).stem}", *args.argv], output=args.output)
-		engine = Interpreter
-		args.output=sys.stdout
 	elif args.engine == 'compile':
 		if args.argv and not args.exec:
 			parser.error("-A --argv requires -e --exec")

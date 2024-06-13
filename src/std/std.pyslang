@@ -357,29 +357,29 @@ macro stdin  1 end
 macro stdout 1 end
 macro stderr 2 end
 
-macro read	stdin  SYS_read  syscall3 drop end
-macro write	stdout SYS_write syscall3 drop end
-macro open	       SYS_open  syscall3 drop end
-macro close	       SYS_close syscall1 drop end
+macro read	SYS_read  syscall3 end
+macro write	SYS_write syscall3 end
+macro open	SYS_open  syscall3 end
+macro close	SYS_close syscall1 end
 
-macro ANSI_ESC "\033[" write end
+macro ANSI_ESC "\033[" write drop end
 
-macro ANSI_RESET	ANSI_ESC "0m" write end
+macro ANSI_RESET	ANSI_ESC "0m" write drop end
 
-macro ANSI_BLACK	ANSI_ESC "30m" write end
-macro ANSI_RED		ANSI_ESC "31m" write end
-macro ANSI_GREEN	ANSI_ESC "32m" write end
-macro ANSI_YELLOW	ANSI_ESC "33m" write end
-macro ANSI_BLUE		ANSI_ESC "34m" write end
-macro ANSI_PURPLE	ANSI_ESC "35m" write end
-macro ANSI_CYAN		ANSI_ESC "36m" write end
-macro ANSI_WHITE	ANSI_ESC "37m" write end
+macro ANSI_BLACK	ANSI_ESC "30m" write drop end
+macro ANSI_RED		ANSI_ESC "31m" write drop end
+macro ANSI_GREEN	ANSI_ESC "32m" write drop end
+macro ANSI_YELLOW	ANSI_ESC "33m" write drop end
+macro ANSI_BLUE		ANSI_ESC "34m" write drop end
+macro ANSI_PURPLE	ANSI_ESC "35m" write drop end
+macro ANSI_CYAN		ANSI_ESC "36m" write drop end
+macro ANSI_WHITE	ANSI_ESC "37m" write drop end
 
 macro ANSI_COLOR
-	"\033[38;2;" write
-	itoa write ";" write
-	itoa write ";" write
-	itoa write "m" write
+	"\033[38;2;" write drop
+	itoa write ";" write drop
+	itoa write ";" write drop
+	itoa write "m" write drop
 end
 
 macro strlen
