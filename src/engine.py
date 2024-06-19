@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Any, TextIO, BinaryIO, Generator, Iterator
 from functools import cached_property
 from queue import LifoQueue, Empty
+from itertools import chain, takewhile
+
 
 import ctypes
 import sys
@@ -17,11 +19,22 @@ from .lexer import (
 	Operands,
 	FlowControl,
 
-	LangExceptions,
-	UnknownToken,
-	InvalidSyntax,
-	SymbolRedefined,
-	FileError,
+)
+
+from .typechecker import (
+	TypeChecker,
+	run_single,
+	Type,
+	Types,
+)
+
+from .errors import (
+	TypeWarning,
+	Stopped,
+)
+
+from .error_trace import (
+	warn, trace,
 )
 
 STR_CAPACITY  = 640_000
@@ -36,6 +49,10 @@ class Engine(ABC):
 
 	@abstractmethod
 	def __init__(self, buffer: TextIO):
+		...
+
+	@abstractmethod
+	def before(self, instructions: list[Token]) -> None:
 		...
 
 	@abstractmethod
@@ -150,6 +167,9 @@ class Compiler(Engine):
 		self.strs = []
 		self.labels = 0
 
+		self.checktype, self.checker = TypeChecker()
+		self._state = 0
+
 		self.block("SLANG COMPILED PROGRAM", None)
 		self.asm1('extern', '__dump')
 		self.asm1('extern', '__udump')
@@ -160,6 +180,8 @@ class Compiler(Engine):
 		self.label('\n_start')
 		self.asm2("mov", "qword [ARGS_PTR]", "rsp")
 
+	def before(self, instructions: list[Token]) -> None:
+		pass
 
 	def block(self, comment: str, token: Token | None) -> None:
 		self._code.append([Block(comment)])
@@ -203,6 +225,14 @@ class Compiler(Engine):
 		self.asm1("pop", "rbp")
 
 	def step(self, instruction: Token) -> int:
+		try:
+			self.checktype.send(instruction)
+		except TypeWarning as e:
+			self._state |= 0b1
+			warn(e)
+		except TypeError as e:
+			self._state |= 0b10
+			trace(e)
 		match instruction:
 			case Token(type=FlowControl.OP_LABEL, value=val):
 				self.block("label", instruction)
@@ -210,6 +240,10 @@ class Compiler(Engine):
 
 			case Token(type=OpTypes.OP_PUSH, value=val):
 				self.block("push", instruction)
+				self.asm1("push", f"{val:.0f}")
+
+			case Token(type=OpTypes.OP_CHAR, value=val):
+				self.block("push char", instruction)
 				self.asm1("push", f"{val:.0f}")
 
 			case Token(type=OpTypes.OP_STRING, value=val):
@@ -255,8 +289,12 @@ class Compiler(Engine):
 
 			case Token(type=Operands.OP_PLUS, value=val):
 				self.block("plus", instruction)
-				self.asm1("pop", "rax")
-				self.asm1("pop", "rbx")
+				self.asm1("pop", "rax") # INT
+				self.asm1("pop", "rbx") # INT
+				if self.checker.last_case == 1:
+					self.asm2("shl", "rax", '3')
+				elif self.checker.last_case == 2:
+					self.asm2("shl", "rbx", '3')
 				self.asm2("add", "rax", "rbx")
 				self.asm1("push", "rax")
 
@@ -264,7 +302,11 @@ class Compiler(Engine):
 				self.block("minus", instruction)
 				self.asm1("pop", "rax")
 				self.asm1("pop", "rbx")
+				if self.checker.last_case == 1:
+					self.asm2("shl", "rax", "3")
 				self.asm2("sub", "rbx", "rax")
+				if self.checker.last_case == 2:
+					self.asm2("shr", "rbx", "3")
 				self.asm1("push", "rbx")
 
 			case Token(type=Operands.OP_MUL, value=val):
@@ -298,6 +340,24 @@ class Compiler(Engine):
 				self.asm1("div", "rsi")
 				self.asm1("push", "rax")
 				self.asm1("push", "rdx")
+
+			case Token(type=Operands.OP_INCREMENT, value=val):
+				self.block("increment", instruction)
+				self.asm1("pop", "rax")
+				if self.checker.last_case == 1:
+					self.asm2("add", "rax", "8")
+				else:
+					self.asm1("inc", "rax")
+				self.asm1("push", "rax")
+
+			case Token(type=Operands.OP_DECREMENT, value=val):
+				self.block("decrement", instruction)
+				self.asm1("pop", "rax")
+				if self.checker.last_case == 1:
+					self.asm2("sub", "rax", "8")
+				else:
+					self.asm1("dec", "rax")
+				self.asm1("push", "rax")
 
 			case Token(type=Operands.OP_BLSH, value=val):
 				self.block("bitwise shift left", instruction)
@@ -642,12 +702,26 @@ class Compiler(Engine):
 			case Token(type=OpTypes.OP_WORD):
 				raise RuntimeError(NotImplemented, instruction)
 
+			case Token(type=PreprocTypes.CAST):
+				pass
+
 			case _:
 				raise RuntimeError(NotImplemented, instruction)
 
 		return 0
 
 	def close(self):
+		try:
+			self.checktype.send(None)
+		except TypeWarning as e:
+			self._state |= 0b1
+			warn(e)
+		except TypeError as e:
+			self._state |= 0b10
+			trace(e)
+		if self._state & 0b10:
+			raise Stopped()
+
 		self.block("DATA", None)
 		self.asm1("segment", ".data")
 		for index, s in enumerate(self.strs):
@@ -678,6 +752,9 @@ class Interpreter(Engine):
 
 		self.strs: dict[Token, tuple[int, int]] = {}
 
+		self.last_case = -1
+		self.type_stack = []
+
 		self.fds: dict[int, BinaryIO] = {
 			0: sys.stdin.buffer,
 			1: buffer,
@@ -707,12 +784,34 @@ class Interpreter(Engine):
 		assert self.str_ptr < 1 + STR_CAPACITY, "String overflow"
 		return n + 1, p
 
-	def push(self, v: Any): self.queue.put(v)
-	def pop(self) -> Any: return self.queue.get_nowait()
+	def push(self, v: Any):
+		self.queue.put(v)
+
+	def pop(self) -> Any:
+		return self.queue.get_nowait()
+
+	def before(self, instructions: list[Token]) -> None:
+		checktype, _ = TypeChecker()
+		state = 0
+		for i in chain(instructions, [None]):
+			try:
+				checktype.send(i)
+			except TypeWarning as e:
+				state |= 0b1
+				warn(e)
+			except TypeError as e:
+				state |= 0b10
+				trace(e)
+		if state & 0b10:
+			raise Stopped()
 
 	def step(self, instruction: Token):
+		self.last_case, self.type_stack, last_type = run_single(instruction, self.type_stack)
 		match instruction:
 			case Token(type=OpTypes.OP_PUSH, value=val):
+				self.queue.put(val)
+
+			case Token(type=OpTypes.OP_CHAR, value=val):
 				self.queue.put(val)
 
 			case Token(type=OpTypes.OP_STRING, value=val):
@@ -723,8 +822,6 @@ class Interpreter(Engine):
 					self.strs[instruction] = (l, p)
 				self.push(l)
 				self.push(p)
-				# push len
-				# push ptr to start of memory
 
 			case Token(type=Intrinsics.OP_DROP, value=val):
 				self.pop()
@@ -756,12 +853,24 @@ class Interpreter(Engine):
 				self.push(a)
 
 			case Token(type=Operands.OP_PLUS, value=val):
-				self.push(self.pop() + self.pop())
+				a = self.pop()
+				b = self.pop()
+				if self.last_case == 1:
+					self.push(a * 8 + b)
+				elif self.last_case == 2:
+					self.push(a + b * 8)
+				else:
+					self.push(a + b)
 
 			case Token(type=Operands.OP_MINUS, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(b - a)
+				if self.last_case == 1:
+					self.push(b - a * 8)
+				elif self.last_case == 2:
+					self.push((b - a) // 8)
+				else:
+					self.push(b - a)
 
 			case Token(type=Operands.OP_MUL, value=val):
 				self.push(self.pop() * self.pop())
@@ -777,6 +886,20 @@ class Interpreter(Engine):
 				self.push(a // b)
 				self.push(a % b)
 
+			case Token(type=Operands.OP_INCREMENT, value=val):
+				a = self.pop()
+				if self.last_case == 1:
+					self.push(a + 8)
+				else:
+					self.push(a + 1)
+
+			case Token(type=Operands.OP_DECREMENT, value=val):
+				a = self.pop()
+				if self.last_case == 1:
+					self.push(a - 8)
+				else:
+					self.push(a - 1)
+
 			case Token(type=Operands.OP_MOD, value=val):
 				b = self.pop()
 				a = self.pop()
@@ -786,50 +909,65 @@ class Interpreter(Engine):
 				a = self.pop()
 				b = self.pop()
 				self.push(b << a)
+
 			case Token(type=Operands.OP_BRSH, value=val):
 				a = self.pop()
 				b = self.pop()
 				self.push(b >> a)
+
 			case Token(type=Operands.OP_BAND, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(b & a)
+				if self.last_case == 0:
+					self.push(b & a)
+				if self.last_case == 1:
+					self.push(b and a)
+
 			case Token(type=Operands.OP_BOR, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(b | a)
+				if self.last_case == 0:
+					self.push(b | a)
+				if self.last_case == 1:
+					self.push(b or a)
+
 			case Token(type=Operands.OP_BXOR, value=val):
-				a = self.pop()
 				b = self.pop()
-				self.push(b ^ a)
+				a = self.pop()
+				if self.last_case == 0:
+					self.push(b ^ a)
+				if self.last_case == 1:
+					self.push(bool(b ^ a))
 
 			case Token(type=Operands.OP_EQ, value=val):
-				self.push(int(self.pop() == self.pop()))
+				a = self.pop()
+				b = self.pop()
+				self.push(a == b)
 
 			case Token(type=Operands.OP_NE, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(int(b != a))
+				self.push(b != a)
 
 			case Token(type=Operands.OP_GT, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(int(b > a))
+				self.push(b > a)
 
 			case Token(type=Operands.OP_GE, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(int(b >= a))
+				self.push(b >= a)
 
 			case Token(type=Operands.OP_LT, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(int(b < a))
+				self.push(b < a)
 
 			case Token(type=Operands.OP_LE, value=val):
 				a = self.pop()
 				b = self.pop()
-				self.push(int(b <= a))
+				self.push(b <= a)
 
 			case Token(type=OpTypes.OP_DUMP, value=val):
 				self.fds[1].write(str(self.pop()).encode('utf8'))
@@ -849,7 +987,6 @@ class Interpreter(Engine):
 			case Token(type=OpTypes.OP_SYSCALL, value=val):
 				raise RuntimeError(NotImplemented, instruction)
 
-
 			case Token(type=OpTypes.OP_SYSCALL1, value=val):
 				raise RuntimeError(NotImplemented, instruction)
 
@@ -865,7 +1002,8 @@ class Interpreter(Engine):
 					b = self.fds[arg1].read(arg3)
 					self.memory[arg2:arg2+len(b)] = b
 				elif syscall == 1:
-					m = self.memory[arg2:arg2+arg3].decode('utf8')
+					m = bytes(takewhile(lambda x: x != 0, self.memory[arg2:arg2+arg3])).decode('utf8')
+					
 					self.fds[arg1].write(m.encode('utf8'))
 					self.fds[arg1].flush()
 					self.push(len(m))
@@ -897,7 +1035,7 @@ class Interpreter(Engine):
 					b = self.fds[arg1].read(arg3)
 					self.memory[arg2:arg2+len(b)] = b
 				elif syscall == 1:
-					m = self.memory[arg2:arg2+arg3].decode('utf8')
+					m = bytes(takewhile(lambda x: x != 0, self.memory[arg2:arg2+arg3])).decode('utf8')
 					self.fds[arg1].write(m.encode('utf8'))
 					self.fds[arg1].flush()
 					self.push(len(m))
@@ -912,9 +1050,6 @@ class Interpreter(Engine):
 
 			case Token(type=OpTypes.OP_RSYSCALL6, value=val):
 				raise RuntimeError(NotImplemented, instruction)
-
-
-
 
 			case Token(type=FlowControl.OP_IF, value=val, position=p):
 				a = self.pop()
@@ -935,7 +1070,6 @@ class Interpreter(Engine):
 			case Token(type=FlowControl.OP_END, value=val, position=p):
 				if val.type in [FlowControl.OP_WHILE,]:
 					return val.position - p
-#					return -(val[0] + val[2].value[0])
 
 			case Token(type=Intrinsics.OP_MEM, value=val):
 				self.push(1 + STR_CAPACITY + ARGV_CAPACITY)
@@ -989,6 +1123,9 @@ class Interpreter(Engine):
 				raise RuntimeError(NotImplemented, instruction)
 
 			case Token(type=FlowControl.OP_LABEL):
+				pass
+
+			case Token(type=PreprocTypes.CAST):
 				pass
 
 			case _:

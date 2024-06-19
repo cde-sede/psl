@@ -4,21 +4,20 @@ from typing import Optional, Any, Iterator, TextIO
 from io import StringIO
 import collections
 import re
+from dataclasses import dataclass
 
+from .errors import (
+	InvalidSyntax,
+)
 
-class LangExceptions(Exception):
-	pass
-
-class UnknownToken(LangExceptions): pass
-class InvalidSyntax(LangExceptions): pass
-class SymbolRedefined(LangExceptions): pass
-class FileError(LangExceptions): pass
 
 class TypesType(Enum):
 	pass
+
 class PreprocTypes(TypesType):
 	MACRO		 = auto()
 	INCLUDE		 = auto()
+	CAST		 = auto()
 
 class FlowControl(TypesType):
 	OP_IF		 = auto()
@@ -35,6 +34,9 @@ class Operands(TypesType):
 	OP_DIV		 = auto()
 	OP_MOD		 = auto()
 	OP_DIVMOD	 = auto()
+
+	OP_INCREMENT = auto()
+	OP_DECREMENT = auto()
 
 	OP_BLSH		 = auto()
 	OP_BRSH		 = auto()
@@ -62,6 +64,7 @@ class Intrinsics(TypesType):
 class OpTypes(TypesType):
 	OP_PUSH		 = auto()
 	OP_STRING	 = auto()
+	OP_CHAR		 = auto()
 
 	OP_WORD		 = auto()
 
@@ -95,7 +98,6 @@ class OpTypes(TypesType):
 	OP_RSYSCALL6 = auto()
 
 	OP_EXIT		 = auto()
-	OP_COUNT	 = auto()
 
 
 class TokenTypes(Enum):
@@ -105,22 +107,36 @@ class TokenTypes(Enum):
 	OP			 = auto()
 	WORD		 = auto()
 	NEW_LINE	 = auto()
+	CAST		 = auto()
 
 	TOKEN_COUNT	 = auto()
 
-class TokenInfo(collections.namedtuple("TokenInfo", "type string start end line file")):
+@dataclass
+class TokenInfo:
 	type: TokenTypes
 	string: str
 	start: tuple[int, int]
 	end: tuple[int, int]
 	line: str
 	file: str
+	parent: 'Optional[TokenInfo]' = None
 
 	def __repr__(self) -> str:
 		return f"TokenInfo(type={self.type}, string={self.string!r}, start={self.start!r}, end={self.end!r}, line={self.line!r} file={self.file})"
 
 	def error(self) -> str:
 		return f"{self.line}{'': <{self.start[1]}}{'':^<{self.end[1] - self.start[1]}}"
+
+	def copy(self, parent: 'Optional[TokenInfo]'=None):
+		return TokenInfo(
+			type=self.type,
+			string=self.string,
+			start=self.start,
+			end=self.end ,
+			line=self.line,
+			file=self.file,
+			parent=self.parent if parent is None else parent
+)
 
 class Token:
 	__slots__ = ("type", "value", "info", "id", "position")
@@ -144,17 +160,18 @@ class Token:
 	def label(self) -> str:
 		return f"{self.type.name}_{self.id}"
 
-	def copy(self) -> 'Token':
+	def copy(self, parent: Optional[TokenInfo]=None) -> 'Token':
 		return Token(
 			value=self.value,
 			type=self.type,
-			info=self.info,
+			info=self.info.copy(parent) if self.info else (parent if parent else None)
 		)
 
 NUMBER_REG	= re.compile(r"^(\s*)(-?\d+)")
 STRING_REG	= re.compile(r"^(\s*)\"(.*)\"")
 OP_REG		= re.compile(r"^(\s*)((?:[^\w\s]|\d)+)")
 CHAR_REG	= re.compile(r"^(\s*)'(\\?.)'")
+CAST_REG	= re.compile(r"^(\s*):(\w+\**)")
 WORD_REG	= re.compile(r"^(\s*)(\w+)")
 ANY_REG		= re.compile(r"^(\s*)(.+)")
 
@@ -168,6 +185,7 @@ def replace_tabs(s: str) -> Iterator[str]:
 		else:
 			yield c
 			j = (j + 1) % 4
+
 
 def _tokenize(f, *, debug=False) -> Iterator[TokenInfo]:
 	toks = []
@@ -201,6 +219,17 @@ def _tokenize(f, *, debug=False) -> Iterator[TokenInfo]:
 			elif r := re.match(CHAR_REG, line[index:]):
 				yield (t := TokenInfo(
 					type=TokenTypes.CHAR,
+					string=r.groups()[1],
+					start=(line_number, index + len(r.groups()[0])),
+					end=(line_number, index + r.span()[1]),
+					line=line,
+					file=f.name
+				))
+				if debug: print(t)
+				index += r.span()[1]
+			elif r := re.match(CAST_REG, line[index:]):
+				yield (t := TokenInfo(
+					type=TokenTypes.CAST,
 					string=r.groups()[1],
 					start=(line_number, index + len(r.groups()[0])),
 					end=(line_number, index + r.span()[1]),
@@ -257,10 +286,11 @@ def _tokenize(f, *, debug=False) -> Iterator[TokenInfo]:
 				break
 
 class Tokenize:
-	def __init__(self, buffer: TextIO, *, debug=False, close=False):
+	def __init__(self, buffer: TextIO, *, debug=False, close=False, parent=None):
 		self.buffer: TextIO = buffer
 		self.debug: bool = debug
 		self.close: bool = close
+		self.parent: Optional[TokenInfo] = parent
 
 		self._extend: list[Iterator] = []
 		
@@ -269,10 +299,15 @@ class Tokenize:
 		self._tokenize = _tokenize(self.buffer, debug=self.debug)
 		return self
 
+	def apply_parent(self, t):
+		if self.parent:
+			t.parent = self.parent
+		return t
+
 	def __next__(self) -> TokenInfo:
 		if self._extend:
 			try:
-				return next(self._extend[0])
+				return self.apply_parent(next(self._extend[0]))
 			except StopIteration:
 				self._extend.pop(0)
 		try:
@@ -281,7 +316,7 @@ class Tokenize:
 			if self.close:
 				self.buffer.close()
 			raise StopIteration
-		return t
+		return self.apply_parent(t)
 
 	def extend(self, tokens):
 		self._extend.append(tokens)

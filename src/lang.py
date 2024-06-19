@@ -7,7 +7,14 @@ import subprocess
 import shutil
 
 from .engine import Engine, Compiler, Interpreter 
-
+from .typechecker import (
+	TypeChecker,
+	TypeCheckerException,
+	NotEnoughTokens,
+	InvalidType,
+	Type,
+	Types,
+)
 
 from .lexer import (
 	Tokenize,
@@ -21,14 +28,24 @@ from .lexer import (
 	Operands,
 	FlowControl,
 
+)
+
+from .errors import (
+	TypeWarning,
 	LangExceptions,
 	UnknownToken,
 	InvalidSyntax,
 	SymbolRedefined,
 	FileError,
+	Stopped,
+)
+
+from .error_trace import (
+	warn, trace,
 )
 
 def PUSH(val: int, info=None)    -> Token: return Token(OpTypes.OP_PUSH, val, info=info)
+def CHAR(val: int, info=None)    -> Token: return Token(OpTypes.OP_CHAR, val, info=info)
 def STRING(val: str, info=None)  -> Token: return Token(OpTypes.OP_STRING, val, info=info)
 def WORD(val: str, info=None)    -> Token: return Token(OpTypes.OP_WORD, val, info=info)
 def DROP(info=None)              -> Token: return Token(Intrinsics.OP_DROP, info=info)
@@ -43,6 +60,8 @@ def MUL(info=None)               -> Token: return Token(Operands.OP_MUL, info=in
 def DIV(info=None)               -> Token: return Token(Operands.OP_DIV, info=info)
 def MOD(info=None)               -> Token: return Token(Operands.OP_MOD, info=info)
 def DIVMOD(info=None)            -> Token: return Token(Operands.OP_DIVMOD, info=info)
+def INCREMENT(info=None)         -> Token: return Token(Operands.OP_INCREMENT, info=info)
+def DECREMENT(info=None)         -> Token: return Token(Operands.OP_DECREMENT, info=info)
 
 def OP_BLSH(info=None)           -> Token: return Token(Operands.OP_BLSH, info=info)
 def OP_BRSH(info=None)           -> Token: return Token(Operands.OP_BRSH, info=info)
@@ -84,23 +103,42 @@ def DO(info=None)                -> Token: return Token(FlowControl.OP_DO, info=
 def END(info=None)               -> Token: return Token(FlowControl.OP_END, info=info)
 def LABEL(name, info=None)       -> Token: return Token(FlowControl.OP_LABEL, name, info=info)
 
-def ARGC(info=None)               -> Token: return Token(Intrinsics.OP_ARGC, info=info)
-def ARGV(info=None)               -> Token: return Token(Intrinsics.OP_ARGV, info=info)
+def ARGC(info=None)              -> Token: return Token(Intrinsics.OP_ARGC, info=info)
+def ARGV(info=None)              -> Token: return Token(Intrinsics.OP_ARGV, info=info)
 def MEM(info=None)               -> Token: return Token(Intrinsics.OP_MEM, info=info)
 def STORE(info=None)             -> Token: return Token(OpTypes.OP_STORE, info=info)
 def LOAD(info=None)              -> Token: return Token(OpTypes.OP_LOAD, info=info)
-def STORE16(info=None)             -> Token: return Token(OpTypes.OP_STORE16, info=info)
-def LOAD16(info=None)              -> Token: return Token(OpTypes.OP_LOAD16, info=info)
-def STORE32(info=None)             -> Token: return Token(OpTypes.OP_STORE32, info=info)
-def LOAD32(info=None)              -> Token: return Token(OpTypes.OP_LOAD32, info=info)
-def STORE64(info=None)             -> Token: return Token(OpTypes.OP_STORE64, info=info)
-def LOAD64(info=None)              -> Token: return Token(OpTypes.OP_LOAD64, info=info)
+def STORE16(info=None)           -> Token: return Token(OpTypes.OP_STORE16, info=info)
+def LOAD16(info=None)            -> Token: return Token(OpTypes.OP_LOAD16, info=info)
+def STORE32(info=None)           -> Token: return Token(OpTypes.OP_STORE32, info=info)
+def LOAD32(info=None)            -> Token: return Token(OpTypes.OP_LOAD32, info=info)
+def STORE64(info=None)           -> Token: return Token(OpTypes.OP_STORE64, info=info)
+def LOAD64(info=None)            -> Token: return Token(OpTypes.OP_LOAD64, info=info)
 
 def EXIT(info=None) -> Token: return Token(OpTypes.OP_EXIT, info=info)
 
 def MACRO(info=None)             -> Token: return Token(PreprocTypes.MACRO, info=info)
 def INCLUDE(info=None)           -> Token: return Token(PreprocTypes.INCLUDE, info=info)
+def CAST(val: Type, info=None)   -> Token: return Token(PreprocTypes.CAST, val, info=info)
 
+
+def StrToType(s: str) -> Type | None:
+	t, l = {
+		'any':  (Types.ANY, 3),
+		'int':  (Types.INT, 3),
+		'ptr':  (Types.PTR, 3),
+		'bool': (Types.BOOL, 4),
+		'char': (Types.CHAR, 4),
+
+		'byte': (Types.CHAR, 4),
+		'dword': (Types.INT, 4),
+	}.get(s.rstrip('*'), None)
+	if t is None: return None
+
+	while s[l:] and s[l:][0] == '*':
+		t = Types.PTR[t]
+		l += 1
+	return t
 
 def unescape_string(s):
 	return s.encode('latin-1', 'backslashreplace').decode('unicode-escape')
@@ -193,32 +231,34 @@ KEYWORDS = {
 
 
 OPERANDS = {
-	"+":  (lambda val, info: PLUS(info=info)),
-	"-":  (lambda val, info: MINUS(info=info)),
-	"*":  (lambda val, info: MUL(info=info)),
-	"/":  (lambda val, info: DIV(info=info)),
-	"%":  (lambda val, info: MOD(info=info)),
-	"/%": (lambda val, info: DIVMOD(info=info)),
-	"==": (lambda val, info: EQ(info=info)),
-	"!=": (lambda val, info: NE(info=info)),
-	">":  (lambda val, info: GT(info=info)),
-	">=": (lambda val, info: GE(info=info)),
-	"<":  (lambda val, info: LT(info=info)),
-	"<=": (lambda val, info: LE(info=info)),
-	".":  (lambda val, info: STORE(info=info)),
-	",":  (lambda val, info: LOAD(info=info)),
+	"+":    (lambda val, info: PLUS(info=info)),
+	"-":    (lambda val, info: MINUS(info=info)),
+	"*":    (lambda val, info: MUL(info=info)),
+	"/":    (lambda val, info: DIV(info=info)),
+	"%":    (lambda val, info: MOD(info=info)),
+	"/%":   (lambda val, info: DIVMOD(info=info)),
+	"++":   (lambda val, info: INCREMENT(info=info)),
+	"--":   (lambda val, info: DECREMENT(info=info)),
+	"==":   (lambda val, info: EQ(info=info)),
+	"!=":   (lambda val, info: NE(info=info)),
+	">":    (lambda val, info: GT(info=info)),
+	">=":   (lambda val, info: GE(info=info)),
+	"<":    (lambda val, info: LT(info=info)),
+	"<=":   (lambda val, info: LE(info=info)),
+	".":    (lambda val, info: STORE(info=info)),
+	",":    (lambda val, info: LOAD(info=info)),
 	".16":  (lambda val, info: STORE16(info=info)),
 	",16":  (lambda val, info: LOAD16(info=info)),
 	".32":  (lambda val, info: STORE32(info=info)),
 	",32":  (lambda val, info: LOAD32(info=info)),
 	".64":  (lambda val, info: STORE64(info=info)),
 	",64":  (lambda val, info: LOAD64(info=info)),
-	"<<": (lambda val, info: OP_BLSH(info=info)),
-	">>": (lambda val, info: OP_BRSH(info=info)),
-	"&":  (lambda val, info: OP_BAND(info=info)),
-	"|":  (lambda val, info: OP_BOR(info=info)),
-	"^":  (lambda val, info: OP_BXOR(info=info)),
-	"^":  (lambda val, info: OP_BXOR(info=info)),
+	"<<":   (lambda val, info: OP_BLSH(info=info)),
+	">>":   (lambda val, info: OP_BRSH(info=info)),
+	"&":    (lambda val, info: OP_BAND(info=info)),
+	"|":    (lambda val, info: OP_BOR(info=info)),
+	"^":    (lambda val, info: OP_BXOR(info=info)),
+	"^":    (lambda val, info: OP_BXOR(info=info)),
 }
 
 
@@ -245,7 +285,7 @@ class Program:
 		if token.type == TokenTypes.NUMBER:
 			return [PUSH(int(token.string), info=token)]
 		if token.type == TokenTypes.CHAR:
-			return [PUSH(ord(unescape_string(token.string)), info=token)]
+			return [CHAR(ord(unescape_string(token.string)), info=token)]
 		if token.type == TokenTypes.STRING:
 			return [STRING(unescape_string(token.string), info=token)]
 		if token.type == TokenTypes.WORD and token.string in KEYWORDS:
@@ -259,9 +299,14 @@ class Program:
 				return [WORD(val=token.string, info=token)]
 			if token.string not in self.symbols:
 				raise UnknownToken(token, "Is not a registered or builtin symbol")
-			return [LABEL(name=token.string, info=token), *[i.copy() for i in self.symbols[token.string].value]]
+			return [LABEL(name=token.string, info=token), *[i.copy(token) for i in self.symbols[token.string].value]]
 		if token.type == TokenTypes.NEW_LINE:
 			raise self.EndLine()
+		if token.type == TokenTypes.CAST:
+			t = StrToType(token.string)
+			if t is None:
+				raise InvalidType(token, f"{token.string} is not a recognized type") # TODO 'did you mean + levenshtein distance'
+			return [CAST(t, info=token)]
 		raise UnknownToken(token, "Is not a recognized symbol")
 
 	@classmethod
@@ -297,6 +342,7 @@ class Program:
 		build_tokens = self.build_tokens(debug)
 		flow_control = self.process_flow_control()
 		expand = self.expand()
+
 		next(build_tokens)
 		next(flow_control)
 		next(expand)
@@ -317,7 +363,7 @@ class Program:
 
 		for index, token in enumerate(self.instructions):
 			token.position = index
-
+			
 		return self
 
 	def search_path(self, path, query):
@@ -338,7 +384,7 @@ class Program:
 					self.instructions.pop(-1)
 					self._position -= 2
 					try:
-						yield iter(Tokenize(self.search_path(self.includes, file), close=True))
+						yield iter(Tokenize(self.search_path(self.includes, file), close=True, parent=token.info))
 					except FileNotFoundError:
 						raise FileError(token.info, f"No file `{token.value}`")
 
@@ -357,8 +403,6 @@ class Program:
 			raise InvalidSyntax(tokens[0].info, "`macro` requires a name")
 		if tokens[1].type != OpTypes.OP_WORD:
 			raise InvalidSyntax(tokens[1].info, f"`macro` name must be a word not `{tokens[1].type.name}`")
-#		if tokens[1].info.string in BUILTIN_WORDS:
-#			raise SymbolRedefined(tokens[1].info, "Is a builtin symbol")
 		if tokens[1].info.string in self.symbols:
 			raise SymbolRedefined(tokens[1].info, "Has already been defined")
 			
@@ -438,6 +482,7 @@ class Program:
 
 		if self.engine is None:
 			raise NoEngine("Add engine before running")
+		self.engine.before(self.instructions)
 		skip = 0
 		while self.pointer < len(self.instructions):
 			try:
@@ -468,13 +513,7 @@ def fclean(*, verbose=False):
 		pass
 	callcmd(["make", "-C", "src/cfunc/", "fclean"], verbose=verbose)
 
-def trace(error):
-	token: TokenInfo = error.args[0]
-	msg = error.args[1]
-	print(f"\033[31mError: {token.file} line {token.start[0] + 1}: {error.__class__.__name__}:\033[0m\n")
-	print(token.error())
-	print(msg)
-#	raise error
+
 
 def compile(*, source: str | Path,
 		 output: str | Path | TextIO,
@@ -488,6 +527,8 @@ def compile(*, source: str | Path,
 			p = Program.frombuffer(f, debug=False, path=source, includes=[Path(i) for i in includes])
 		except LangExceptions as e:
 			trace(e)
+			return -1
+		except Stopped as e:
 			return -1
 
 	objs = Path(temp)
@@ -526,6 +567,8 @@ def interpret(*, source: str | Path,
 			p = Program.frombuffer(f, debug=False, path=source, includes=[Path(i) for i in includes])
 		except LangExceptions as e:
 			trace(e)
+			return -1
+		except Stopped as e:
 			return -1
 
 	if output == 'stdout':
