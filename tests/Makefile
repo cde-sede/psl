@@ -23,3 +23,6 @@ re: fclean all
 fclean:
 	rm -f $(DAT)
 	rm -f $(EXE)
+
+clean:
+	rm -f $(EXE)

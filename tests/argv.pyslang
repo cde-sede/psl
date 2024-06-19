@@ -2,9 +2,9 @@ include "std.pyslang"
 
 argv 8 + argc 1 -
 while dup 0 > do
-	over ,64 dup strlen swap stdout write drop
+	over ,64 cast[ptr] dup  strlen swap stdout write drop
 	"\n" stdout write drop
 	1 - swap 8 + swap
 end
-
+drop drop
 0 exit
