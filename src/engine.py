@@ -287,6 +287,24 @@ class Compiler(Engine):
 				self.asm1("push", "rbx")
 				self.asm1("push", "rax")
 
+			case Token(type=Intrinsics.OP_ROT, value=val):
+				self.block("rot", instruction)
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm1("pop", "rcx")
+				self.asm1("push", "rbx")
+				self.asm1("push", "rax")
+				self.asm1("push", "rcx")
+
+			case Token(type=Intrinsics.OP_RROT, value=val):
+				self.block("rot", instruction)
+				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
+				self.asm1("pop", "rcx")
+				self.asm1("push", "rax")
+				self.asm1("push", "rcx")
+				self.asm1("push", "rbx")
+
 			case Token(type=Operands.OP_PLUS, value=val):
 				self.block("plus", instruction)
 				self.asm1("pop", "rax") # INT
@@ -698,7 +716,6 @@ class Compiler(Engine):
 				self.asm2("mov", "rbx", "[rax]")
 				self.asm1("push", "rbx")
 
-
 			case Token(type=OpTypes.OP_WORD):
 				raise RuntimeError(NotImplemented, instruction)
 
@@ -851,6 +868,22 @@ class Interpreter(Engine):
 				self.push(a)
 				self.push(b)
 				self.push(a)
+
+			case Token(type=Intrinsics.OP_ROT, value=val):
+				a = self.pop()
+				b = self.pop()
+				c = self.pop()
+				self.push(b)
+				self.push(a)
+				self.push(c)
+
+			case Token(type=Intrinsics.OP_RROT, value=val):
+				a = self.pop()
+				b = self.pop()
+				c = self.pop()
+				self.push(a)
+				self.push(c)
+				self.push(b)
 
 			case Token(type=Operands.OP_PLUS, value=val):
 				a = self.pop()

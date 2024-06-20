@@ -48,14 +48,15 @@ class Type:
 		return ((self.name == other.name
 				if other.name != 'ANY' and self.name != 'ANY'
 				else True) and (self.parent == other.parent)) if other is not None else False
-	def __repr__(self):
-		w = f"{self.name}"
-		n = self
-		while (n := n.parent):
-			w = f"{n.name}[{w}]"
-		return w
+#	def __repr__(self):
+#		w = f"{self.name}"
+#		n = self
+#		while (n := n.parent):
+#			w = f"{n.name}[{w}]"
+#		return w
 	def __hash__(self):
 		return hash(repr(self))
+
 
 ANY		= Type('ANY', 8)
 CHAR	= Type('CHAR', 1)
@@ -69,6 +70,18 @@ class Types:
 	INT		= INT
 	PTR		= PTR
 	BOOL	= BOOL
+
+def derefType(t: Type) -> Type:
+	t2 = deepcopy(t)
+	n = t2
+	p = n
+	while n.parent is not None:
+		p = n
+		n = n.parent
+	if p == n:
+		raise ValueError("Can't be deref'ed")
+	p.parent = None
+	return t2
 
 def getOperationName(t: Token):
 	return t.type.name
@@ -223,6 +236,24 @@ class _TypeChecker:
 				case Token(type=Intrinsics.OP_OVER, value=val):
 					self.length_check(2, token)
 					self.stack.append(self.stack[-2])
+
+				case Token(type=Intrinsics.OP_ROT, value=val):
+					self.length_check(3, token)
+					a = self.stack.pop(-1)
+					b = self.stack.pop(-1)
+					c = self.stack.pop(-1)
+					self.stack.append(b)
+					self.stack.append(a)
+					self.stack.append(c)
+
+				case Token(type=Intrinsics.OP_RROT, value=val):
+					self.length_check(3, token)
+					a = self.stack.pop(-1)
+					b = self.stack.pop(-1)
+					c = self.stack.pop(-1)
+					self.stack.append(a)
+					self.stack.append(c)
+					self.stack.append(b)
 
 				case Token(type=Operands.OP_PLUS, value=val):
 					case, stack_types = self.check_comb([
@@ -508,31 +539,26 @@ class _TypeChecker:
 
 				case Token(type=OpTypes.OP_STORE, value=val):
 					self.check([CHAR, PTR[ANY]], token)
-
-				case Token(type=OpTypes.OP_LOAD, value=val):
-					self.check([PTR[ANY]], token)
-					self.stack.append((token, CHAR))
-
 				case Token(type=OpTypes.OP_STORE16, value=val):
 					self.check([INT, PTR[ANY]], token)
-
-				case Token(type=OpTypes.OP_LOAD16, value=val):
-					self.check([PTR[ANY]], token)
-					self.stack.append((token, INT))
-
 				case Token(type=OpTypes.OP_STORE32, value=val):
 					self.check([INT, PTR[ANY]], token)
-
-				case Token(type=OpTypes.OP_LOAD32, value=val):
-					self.check([PTR[ANY]], token)
-					self.stack.append((token, INT))
-
 				case Token(type=OpTypes.OP_STORE64, value=val):
 					self.check([INT, PTR[ANY]], token)
 
+
+				case Token(type=OpTypes.OP_LOAD, value=val):
+					t = self.check([PTR[ANY]], token)
+					self.stack.append((token, derefType(t[0][1])))
+				case Token(type=OpTypes.OP_LOAD16, value=val):
+					t = self.check([PTR[ANY]], token)
+					self.stack.append((token, derefType(t[0][1])))
+				case Token(type=OpTypes.OP_LOAD32, value=val):
+					t = self.check([PTR[ANY]], token)
+					self.stack.append((token, derefType(t[0][1])))
 				case Token(type=OpTypes.OP_LOAD64, value=val):
-					self.check([PTR[ANY]], token)
-					self.stack.append((token, INT))
+					t = self.check([PTR[ANY]], token)
+					self.stack.append((token, derefType(t[0][1])))
 
 				case Token(type=OpTypes.OP_WORD):
 					raise RuntimeError(NotImplemented, token)

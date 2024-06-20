@@ -345,10 +345,10 @@ macro itoa
 			1 +
 		end
 		swap drop
-		dup 0 .
+		dup 0 !
 		mem - mem
 	else
-		drop mem '0' . mem 1 + 0 .
+		drop mem '0' ! mem 1 + 0 !
 		1 mem
 	end
 end

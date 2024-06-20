@@ -57,6 +57,8 @@ class Intrinsics(TypesType):
 	OP_DUP2		 = auto()
 	OP_SWAP		 = auto()
 	OP_OVER		 = auto()
+	OP_ROT		 = auto()
+	OP_RROT		 = auto()
 	OP_MEM		 = auto()
 	OP_ARGC		 = auto()
 	OP_ARGV		 = auto()
@@ -69,12 +71,13 @@ class OpTypes(TypesType):
 	OP_WORD		 = auto()
 
 	OP_STORE	 = auto()
-	OP_LOAD		 = auto()
 	OP_STORE16	 = auto()
-	OP_LOAD16	 = auto()
 	OP_STORE32	 = auto()
-	OP_LOAD32	 = auto()
 	OP_STORE64	 = auto()
+
+	OP_LOAD		 = auto()
+	OP_LOAD16	 = auto()
+	OP_LOAD32	 = auto()
 	OP_LOAD64	 = auto()
 
 	OP_DUMP		 = auto()

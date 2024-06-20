@@ -53,6 +53,8 @@ def DUP(info=None)               -> Token: return Token(Intrinsics.OP_DUP, info=
 def DUP2(info=None)              -> Token: return Token(Intrinsics.OP_DUP2, info=info)
 def SWAP(info=None)              -> Token: return Token(Intrinsics.OP_SWAP, info=info)
 def OVER(info=None)              -> Token: return Token(Intrinsics.OP_OVER, info=info)
+def ROT(info=None)              -> Token: return Token(Intrinsics.OP_ROT, info=info)
+def RROT(info=None)              -> Token: return Token(Intrinsics.OP_RROT, info=info)
 
 def PLUS(info=None)              -> Token: return Token(Operands.OP_PLUS, info=info)
 def MINUS(info=None)             -> Token: return Token(Operands.OP_MINUS, info=info)
@@ -106,14 +108,16 @@ def LABEL(name, info=None)       -> Token: return Token(FlowControl.OP_LABEL, na
 def ARGC(info=None)              -> Token: return Token(Intrinsics.OP_ARGC, info=info)
 def ARGV(info=None)              -> Token: return Token(Intrinsics.OP_ARGV, info=info)
 def MEM(info=None)               -> Token: return Token(Intrinsics.OP_MEM, info=info)
-def STORE(info=None)             -> Token: return Token(OpTypes.OP_STORE, info=info)
+
 def LOAD(info=None)              -> Token: return Token(OpTypes.OP_LOAD, info=info)
-def STORE16(info=None)           -> Token: return Token(OpTypes.OP_STORE16, info=info)
 def LOAD16(info=None)            -> Token: return Token(OpTypes.OP_LOAD16, info=info)
-def STORE32(info=None)           -> Token: return Token(OpTypes.OP_STORE32, info=info)
 def LOAD32(info=None)            -> Token: return Token(OpTypes.OP_LOAD32, info=info)
-def STORE64(info=None)           -> Token: return Token(OpTypes.OP_STORE64, info=info)
 def LOAD64(info=None)            -> Token: return Token(OpTypes.OP_LOAD64, info=info)
+
+def STORE(info=None)             -> Token: return Token(OpTypes.OP_STORE, info=info)
+def STORE16(info=None)           -> Token: return Token(OpTypes.OP_STORE16, info=info)
+def STORE32(info=None)           -> Token: return Token(OpTypes.OP_STORE32, info=info)
+def STORE64(info=None)           -> Token: return Token(OpTypes.OP_STORE64, info=info)
 
 def EXIT(info=None) -> Token: return Token(OpTypes.OP_EXIT, info=info)
 
@@ -214,6 +218,8 @@ KEYWORDS = {
 	"dup2":      (lambda val, info: DUP2(info=info)),
 	"swap":      (lambda val, info: SWAP(info=info)),
 	"over":      (lambda val, info: OVER(info=info)),
+	"rot":       (lambda val, info: ROT(info=info)),
+	"rrot":      (lambda val, info: RROT(info=info)),
 	"exit":      (lambda val, info: EXIT(info=info)),
 	"if":        (lambda val, info: IF(info=info)),
 	"else":      (lambda val, info: ELSE(info=info)),
@@ -245,14 +251,17 @@ OPERANDS = {
 	">=":   (lambda val, info: GE(info=info)),
 	"<":    (lambda val, info: LT(info=info)),
 	"<=":   (lambda val, info: LE(info=info)),
-	".":    (lambda val, info: STORE(info=info)),
-	",":    (lambda val, info: LOAD(info=info)),
-	".16":  (lambda val, info: STORE16(info=info)),
-	",16":  (lambda val, info: LOAD16(info=info)),
-	".32":  (lambda val, info: STORE32(info=info)),
-	",32":  (lambda val, info: LOAD32(info=info)),
-	".64":  (lambda val, info: STORE64(info=info)),
-	",64":  (lambda val, info: LOAD64(info=info)),
+
+	"!":    (lambda val, info: STORE(info=info)),
+	"!16":  (lambda val, info: STORE16(info=info)),
+	"!32":  (lambda val, info: STORE32(info=info)),
+	"!64":  (lambda val, info: STORE64(info=info)),
+
+	"@":    (lambda val, info: LOAD(info=info)),
+	"@16":  (lambda val, info: LOAD16(info=info)),
+	"@32":  (lambda val, info: LOAD32(info=info)),
+	"@64":  (lambda val, info: LOAD64(info=info)),
+
 	"<<":   (lambda val, info: OP_BLSH(info=info)),
 	">>":   (lambda val, info: OP_BRSH(info=info)),
 	"&":    (lambda val, info: OP_BAND(info=info)),
@@ -293,6 +302,8 @@ class Program:
 		if token.type == TokenTypes.OP and token.string == '//':
 			raise self.Comment()
 		if token.type == TokenTypes.OP and token.string != '//':
+			if token.string not in OPERANDS:
+				raise UnknownToken(token, "Is not a recognized symbol")
 			return [OPERANDS[token.string](token.string, token)]
 		if token.type == TokenTypes.WORD and token.string not in KEYWORDS:
 			if self._in_macro == 1:
