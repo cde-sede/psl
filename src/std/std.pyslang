@@ -383,10 +383,12 @@ macro ANSI_COLOR
 end
 
 macro strlen
+	:int
 	0 swap
-	while dup load 0 != do
-		1 + swap
-		1 + swap
+	while dup :int* load 0 != do
+		++ swap
+		++ swap
 	end
 	drop
+	:char*
 end
