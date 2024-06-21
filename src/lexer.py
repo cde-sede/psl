@@ -21,6 +21,7 @@ class PreprocTypes(TypesType):
 
 class FlowControl(TypesType):
 	OP_IF		 = auto()
+	OP_ELIF		 = auto()
 	OP_ELSE		 = auto()
 	OP_WHILE	 = auto()
 	OP_DO		 = auto()
@@ -138,6 +139,12 @@ class TokenInfo:
 			parent=self.parent if parent is None else parent
 )
 
+@dataclass
+class FlowInfo:
+	root: 'Token' # OP_IF or OP_WHILE
+	next: Optional['Token'] = None
+	end: Optional['Token'] = None
+
 class Token:
 	__slots__ = ("type", "value", "info", "id", "position")
 
@@ -167,13 +174,13 @@ class Token:
 			info=self.info.copy(parent) if self.info else (parent if parent else None)
 		)
 
-NUMBER_REG	= re.compile(r"^(\s*)(-?\d+)")
-STRING_REG	= re.compile(r"^(\s*)\"(.*)\"")
-OP_REG		= re.compile(r"^(\s*)((?:[^\w\s]|\d)+)")
-CHAR_REG	= re.compile(r"^(\s*)'(\\?.)'")
-CAST_REG	= re.compile(r"^(\s*):(\w+\**)")
-WORD_REG	= re.compile(r"^(\s*)(\w+)")
-ANY_REG		= re.compile(r"^(\s*)(.+)")
+NUMBER_REG	 = re.compile(r"^(\s*)(-?\d+)")
+STRING_REG	 = re.compile(r"^(\s*)\"(.*)\"")
+OP_REG		 = re.compile(r"^(\s*)((?:[^\w\s]|\d)+)")
+CHAR_REG	 = re.compile(r"^(\s*)'(\\?.)'")
+CAST_REG	 = re.compile(r"^(\s*):(\w+\**)")
+WORD_REG	 = re.compile(r"^(\s*)(\w+)")
+ANY_REG		 = re.compile(r"^(\s*)(.+)")
 
 def replace_tabs(s: str) -> Iterator[str]:
 	j = 0

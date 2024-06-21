@@ -1,4 +1,6 @@
-from .lexer import (Token,
+from .lexer import (
+	Token,
+	FlowInfo,
 	FlowControl,
 	OpTypes,
 	Intrinsics,
@@ -433,8 +435,14 @@ class _TypeChecker:
 					self.check([INT], token)
 
 				case Token(type=FlowControl.OP_IF, value=val):
-					self.check([BOOL], token)
+					#					self.check([BOOL], token)
 					self.block_stack.append([(a, b) for a, b in self.stack])
+					self.last_case = -1
+
+				case Token(type=FlowControl.OP_ELIF, value=val):
+					prev = self.block_stack.pop()
+					self.block_stack.append([(a, b) for a, b in self.stack])
+					self.stack = prev
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_ELSE, value=val):
@@ -458,11 +466,11 @@ class _TypeChecker:
 						raise AddedToken(self.stack[-1][0].info, "was added", WhileException(token.info, "block from `while` until `do` should only push a boolean on the stack"))
 					for i, j in zip(prev, self.stack):
 						if i[1] != j[1]:
-							raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", WhileException(val.value['token'].info, "block from `while` until `do` must conserve stack")))
+							raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", WhileException(val.root.info, "block from `while` until `do` must conserve stack")))
 
 				case Token(type=FlowControl.OP_END, value=val):
 					self.last_case = -1
-					if val.type in [FlowControl.OP_WHILE,]:
+					if val.root.type in [FlowControl.OP_WHILE,]:
 						prev = self.block_stack[-1]
 
 						if len(prev) > len(self.stack):
@@ -471,29 +479,18 @@ class _TypeChecker:
 							raise AddedToken(self.stack[-1][0].info, "was added", WhileException(token.info, "`while` blocks must conserve stack size"))
 						for i, j in zip(prev, self.stack):
 							if i[1] != j[1]:
-								raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", WhileException(val.value['token'].info, "`while` blocks must conserve stack")))
+								raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", WhileException(val.root.info, "`while` blocks must conserve stack")))
 						self.stack = prev
-					elif val.type in [FlowControl.OP_IF,]:
-						if token.value.value['token'].type == FlowControl.OP_ELSE:
-							prev_stack = self.block_stack.pop()
-							if len(prev_stack) > len(self.stack):
-								raise MissingToken(prev_stack[-1][0].info, "is missing", ElseException(val.value['token'].info, "`if` and `else` blocks must conserve stack"))
-							if len(prev_stack) < len(self.stack):
-								raise AddedToken(self.stack[-1][0].info, "was added", ElseException(val.value['token'].info, "`if` and `else` blocks must conserve stack"))
-							for i, j in zip(prev_stack, self.stack):
-								if i[1] != j[1]:
-									raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", ElseException(val.value['token'].info, "`if` and `else` blocks must conserve stack")))
-							self.stack = prev_stack
-						else:
-							prev_stack = self.block_stack.pop()
-							if len(prev_stack) > len(self.stack):
-								raise MissingToken(prev_stack[-1][0].info, "is missing", IfException(val.info, "else-less `if` block must conserve stackack"))
-							if len(prev_stack) < len(self.stack):
-								raise AddedToken(self.stack[-1][0].info, "was added", IfException(val.info, "else-less `if` block must conserve stack"))
-							for i, j in zip(prev_stack, self.stack):
-								if i[1] != j[1]:
-									raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", IfException(val.info, "else-less `if` block must conserve stack")))
-							self.stack = prev_stack
+					elif val.root.type in [FlowControl.OP_IF, FlowControl.OP_ELIF]:
+						prev_stack = self.block_stack.pop()
+						if len(prev_stack) > len(self.stack):
+							raise MissingToken(prev_stack[-1][0].info, "is missing or was added", IfException(val.root.info, "Stack not conserved"))
+						if len(prev_stack) < len(self.stack):
+							raise AddedToken(self.stack[-1][0].info, "is missing or was added", IfException(val.root.info, "Stack not conserved"))
+						for i, j in zip(prev_stack, self.stack):
+							if i[1] != j[1]:
+								raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", IfException(val.root.info, "Stack not conserved")))
+						self.stack = prev_stack
 					else:
 						raise RuntimeError(NotImplemented, token)
 

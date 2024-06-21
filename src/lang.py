@@ -1,4 +1,4 @@
-from typing import Optional, TextIO, BinaryIO, Type
+from typing import Optional, TextIO, BinaryIO, Type, cast
 from pathlib import Path
 
 import os
@@ -19,6 +19,7 @@ from .typechecker import (
 from .lexer import (
 	Tokenize,
 	Token,
+	FlowInfo,
 	TokenInfo,
 	TokenTypes,
 
@@ -97,6 +98,7 @@ def RSYSCALL5(info=None)         -> Token: return Token(OpTypes.OP_RSYSCALL5, in
 def RSYSCALL6(info=None)         -> Token: return Token(OpTypes.OP_RSYSCALL6, info=info)
 
 def IF(info=None)                -> Token: return Token(FlowControl.OP_IF, info=info)
+def ELIF(info=None)              -> Token: return Token(FlowControl.OP_ELIF, info=info)
 def ELSE(info=None)              -> Token: return Token(FlowControl.OP_ELSE, info=info)
 def WHILE(info=None)             -> Token: return Token(FlowControl.OP_WHILE, info=info)
 def DO(info=None)                -> Token: return Token(FlowControl.OP_DO, info=info)
@@ -216,6 +218,7 @@ KEYWORDS = {
 	"over":      (lambda val, info: OVER(info=info)),
 	"exit":      (lambda val, info: EXIT(info=info)),
 	"if":        (lambda val, info: IF(info=info)),
+	"elif":      (lambda val, info: ELIF(info=info)),
 	"else":      (lambda val, info: ELSE(info=info)),
 	"while":     (lambda val, info: WHILE(info=info)),
 	"do":        (lambda val, info: DO(info=info)),
@@ -411,7 +414,7 @@ class Program:
 
 
 	def process_flow_control(self):
-		stack = []
+		stack: list[tuple[Token, FlowInfo]] = []
 
 		while True:
 			token = (yield)
@@ -419,57 +422,58 @@ class Program:
 				break
 			match token:
 				case Token(type=FlowControl.OP_IF):
-					token.value = {"token": token, "previous": token}
-					stack.append(token.value)
+					token.value = FlowInfo(token)
+					stack.append((token, token.value))
+
+				case Token(type=FlowControl.OP_ELIF):
+					top, flow = stack.pop()
+					if top.type not in (FlowControl.OP_IF, FlowControl.OP_ELIF):
+						raise InvalidSyntax(top.info, '`elif` must be preceded by `if` or `elif`')
+					token.value = FlowInfo(flow.root)
+					flow.next = token
+					stack.append((token, token.value))
 
 				case Token(type=FlowControl.OP_ELSE):
-					try:
-						d = stack.pop()
-					except IndexError:
-						raise InvalidSyntax(token.info, "`else` requires a preceding `if`")
-					token.value = {"token": token, "previous": d['previous']}
-					stack.append(token.value)
-
-					d['token'].value['token'] = token
+					top, flow = stack.pop()
+					if top.type not in (FlowControl.OP_IF, FlowControl.OP_ELIF):
+						raise InvalidSyntax(top.info, '`elif` must be preceded by `if` or `elif`')
+					token.value = FlowInfo(flow.root)
+					flow.next = token
+					stack.append((token, token.value))
 
 				case Token(type=FlowControl.OP_END):
-					try:
-						d = stack.pop()
-					except IndexError:
-						raise InvalidSyntax(token.info, "`end` requires a preceding `if`, `else`, `do` or `macro`")
-
-					d['token'].value['token'] = token
-					token.value = d['previous']
-
-					if token.value.type == PreprocTypes.MACRO:
-						self.parse_macro(self.instructions[token.value.position:token.position])
-						for i in reversed(range(token.value.position, token.position+1)):
+					top, flow = stack.pop()
+					token.value = FlowInfo(flow.root)
+					if top.type is PreprocTypes.MACRO:
+						self.parse_macro(self.instructions[top.value.root.position:token.position])
+						for i in reversed(range(top.value.root.position, token.position+1)):
 							self.instructions.pop(i)
 							self._position -= 1
-						self._in_macro = 0
+					else:
+						node = flow.root
+						while node:
+							node.value.end = token
+							node = node.value.next
 
 				case Token(type=FlowControl.OP_WHILE):
-					token.value = {"token": token, "previous": token}
-					stack.append(token.value)
+					token.value = FlowInfo(token)
+					stack.append((token, token.value))
 
 				case Token(type=FlowControl.OP_DO):
-					try:
-						d = stack.pop()
-					except IndexError:
-						raise InvalidSyntax(token.info, "`do` requires a preceding `while`")
-					token.value = {"token": token, "previous": d['previous']}
-					stack.append(token.value)
-
+					top, flow = stack.pop()
+					if top.type not in [FlowControl.OP_IF, FlowControl.OP_ELIF, FlowControl.OP_WHILE]:
+						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif` or `while`")
+					token.value = flow
+					stack.append((top, flow))
+					
 				case Token(type=PreprocTypes.MACRO):
-					token.value = {"token": token, "previous": token}
-					stack.append(token.value)
+					token.value = FlowInfo(token)
 					if self._in_macro:
-						raise InvalidSyntax(token.info, f"nested `macro` definition is not allowed")
-
+						raise InvalidSyntax(token.info, f"nested macro definition is not allowed")
 					self._in_macro = 1
 
 		if stack:
-			raise InvalidSyntax(stack[-1]['token'].info, "is missing end")
+			raise InvalidSyntax(stack[-1][0].info, "is missing an end")
 		yield
 
 	def add(self, token: Token) -> 'Program':

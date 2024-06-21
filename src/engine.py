@@ -603,13 +603,15 @@ class Compiler(Engine):
 			case Token(type=FlowControl.OP_IF, value=val):
 				self.block("IF", instruction)
 				self.label(instruction.label())
-				self.asm1("pop", "rax")
-				self.asm2("test", "rax", "rax")
-				self.asm1("jz", f"{val['token'].label()}")
+			
+			case Token(type=FlowControl.OP_ELIF, value=val):
+				self.block("ELIF", instruction)
+				self.asm1("jmp", f"{val.end.label()}")
+				self.label(instruction.label())
 
 			case Token(type=FlowControl.OP_ELSE, value=val):
 				self.block("ELSE", instruction)
-				self.asm1("jmp", f"{val['token'].label()}")
+				self.asm1("jmp", f"{val.end.label()}")
 				self.label(instruction.label())
 
 
@@ -622,12 +624,15 @@ class Compiler(Engine):
 				self.label(instruction.label())
 				self.asm1("pop", "rax")
 				self.asm2("test", "rax", "rax")
-				self.asm1("jz", f"{val['token'].label()}")
+				if val.next:
+					self.asm1("jz", f"{val.next.label()}")
+				else:
+					self.asm1("jz", f"{val.end.label()}")
 
 			case Token(type=FlowControl.OP_END, value=val):
 				self.block("END", instruction)
-				if val.type in [FlowControl.OP_WHILE,]:
-					self.asm1("jmp", f"{val.label()}")
+				if val.root.type in [FlowControl.OP_WHILE,]:
+					self.asm1("jmp", f"{val.root.label()}")
 				self.label(instruction.label())
 
 			case Token(type=Intrinsics.OP_MEM, value=val):
@@ -1052,12 +1057,15 @@ class Interpreter(Engine):
 				raise RuntimeError(NotImplemented, instruction)
 
 			case Token(type=FlowControl.OP_IF, value=val, position=p):
-				a = self.pop()
-				if a == 0:
-					return val['token'].position - p
+				pass
+
+			case Token(type=FlowControl.OP_ELIF, value=val, position=p):
+				pass
 
 			case Token(type=FlowControl.OP_ELSE, value=val, position=p):
-				return val['token'].position - p
+				if val.next:
+					return val.next.position - p
+				return val.end.position - p
 
 			case Token(type=FlowControl.OP_WHILE, value=val):
 				pass
@@ -1065,10 +1073,12 @@ class Interpreter(Engine):
 			case Token(type=FlowControl.OP_DO, value=val, position=p):
 				a = self.pop()
 				if a == 0:
-					return val['token'].position - p
+					if val.next:
+						return val.next.position - p
+					return val.end.position - p
 
 			case Token(type=FlowControl.OP_END, value=val, position=p):
-				if val.type in [FlowControl.OP_WHILE,]:
+				if val.root.type in [FlowControl.OP_WHILE,]:
 					return val.position - p
 
 			case Token(type=Intrinsics.OP_MEM, value=val):
