@@ -345,10 +345,10 @@ macro itoa
 			1 +
 		end
 		swap drop
-		dup 0 .
+		dup 0 !
 		mem - mem
 	else
-		drop mem '0' . mem 1 + 0 .
+		drop mem '0' ! mem 1 + 0 !
 		1 mem
 	end
 end
@@ -383,10 +383,12 @@ macro ANSI_COLOR
 end
 
 macro strlen
+	:int
 	0 swap
-	while dup load 0 != do
-		1 + swap
-		1 + swap
+	while dup :int* load 0 != do
+		++ swap
+		++ swap
 	end
 	drop
+	:char*
 end
