@@ -181,13 +181,13 @@ class Token:
 			info=self.info.copy(parent) if self.info else (parent if parent else None)
 		)
 
-NUMBER_REG	 = re.compile(r"^(\s*)(-?\d+)")
-STRING_REG	 = re.compile(r"^(\s*)\"(.*)\"")
-OP_REG		 = re.compile(r"^(\s*)((?:[^\w\s]|\d)+)")
-CHAR_REG	 = re.compile(r"^(\s*)'(\\?.)'")
-CAST_REG	 = re.compile(r"^(\s*):(\w+\**)")
-WORD_REG	 = re.compile(r"^(\s*)(\w+)")
-ANY_REG		 = re.compile(r"^(\s*)(.+)")
+NUMBER_REG	 = re.compile(r"^(\s*)(-?\d+)(\s+|$)")
+STRING_REG	 = re.compile(r"^(\s*)\"(.*)\"(\s+|$)")
+OP_REG		 = re.compile(r"^(\s*)((?:[^\w\s]|\d)+)(\s+|$)")
+CHAR_REG	 = re.compile(r"^(\s*)'(\\?.)'(\s+|$)")
+CAST_REG	 = re.compile(r"^(\s*):(\w+\**)(\s+|$)")
+WORD_REG	 = re.compile(r"^(\s*)([^\s]+)(\s+|$)")
+ANY_REG		 = re.compile(r"^(\s*)(.+)(\s+|$)")
 
 def replace_tabs(s: str) -> Iterator[str]:
 	j = 0
@@ -286,7 +286,7 @@ def _tokenize(f, *, debug=False) -> Iterator[TokenInfo]:
 						end=(line_number, index + r.span()[1]),
 						line=line,
 						file=f.name
-					))
+					), "Parsing error")
 				else:
 					yield (t := TokenInfo(
 						type=TokenTypes.NEW_LINE,
