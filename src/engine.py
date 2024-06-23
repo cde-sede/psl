@@ -235,12 +235,17 @@ class Compiler(Engine):
 			trace(e)
 		match instruction:
 			case Token(type=FlowControl.OP_LABEL, value=val):
-				self.block("label", instruction)
-				self.label(val, force_unique=True)
+				pass
+			#	self.block("label", instruction)
+			#				self.label(val, force_unique=True)
 
 			case Token(type=OpTypes.OP_PUSH, value=val):
 				self.block("push", instruction)
-				self.asm1("push", f"{val:.0f}")
+				if val > 2147483647:
+					self.asm2("mov", "rax", f"{val:.0f}")
+					self.asm1("push", "rax")
+				else:
+					self.asm1("push", f"{val:.0f}")
 
 			case Token(type=OpTypes.OP_CHAR, value=val):
 				self.block("push char", instruction)
@@ -675,8 +680,8 @@ class Compiler(Engine):
 
 			case Token(type=OpTypes.OP_STORE, value=val):
 				self.block("store", instruction)
-				self.asm1("pop", "rbx")
 				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
 				self.asm2("mov", "byte [rax]", "bl")
 
 			case Token(type=OpTypes.OP_LOAD, value=val):
@@ -688,8 +693,8 @@ class Compiler(Engine):
 
 			case Token(type=OpTypes.OP_STORE16, value=val):
 				self.block("store 16", instruction)
-				self.asm1("pop", "rbx")
 				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
 				self.asm2("mov", "word [rax]", "bx")
 
 			case Token(type=OpTypes.OP_LOAD16, value=val):
@@ -701,8 +706,8 @@ class Compiler(Engine):
 
 			case Token(type=OpTypes.OP_STORE32, value=val):
 				self.block("store 32", instruction)
-				self.asm1("pop", "rbx")
 				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
 				self.asm2("mov", "dword [rax]", "ebx")
 
 			case Token(type=OpTypes.OP_LOAD32, value=val):
@@ -714,8 +719,8 @@ class Compiler(Engine):
 
 			case Token(type=OpTypes.OP_STORE64, value=val):
 				self.block("store 64", instruction)
-				self.asm1("pop", "rbx")
 				self.asm1("pop", "rax")
+				self.asm1("pop", "rbx")
 				self.asm2("mov", "[rax]", "rbx")
 
 			case Token(type=OpTypes.OP_LOAD64, value=val):
@@ -1131,8 +1136,8 @@ class Interpreter(Engine):
 				self.push(self.argv_ptr)
 
 			case Token(type=OpTypes.OP_STORE, value=val):
-				value = self.pop()
 				addr = self.pop()
+				value = self.pop()
 				self.memory[addr] = value & 0xFF
 
 			case Token(type=OpTypes.OP_LOAD, value=val):
@@ -1140,8 +1145,8 @@ class Interpreter(Engine):
 				self.push(self.memory[addr])
 
 			case Token(type=OpTypes.OP_STORE16, value=val):
-				value = (self.pop() & 0xFFFF).to_bytes(length=2, byteorder='little')
 				addr = self.pop()
+				value = (self.pop() & 0xFFFF).to_bytes(length=2, byteorder='little')
 				self.memory[addr:addr+2] = value
 
 			case Token(type=OpTypes.OP_LOAD16, value=val):
@@ -1149,8 +1154,8 @@ class Interpreter(Engine):
 				self.push(int.from_bytes(self.memory[addr:addr+2], byteorder="little"))
 
 			case Token(type=OpTypes.OP_STORE32, value=val):
-				value = (self.pop() & 0xFFFFFFFF).to_bytes(length=4, byteorder='little')
 				addr = self.pop()
+				value = (self.pop() & 0xFFFFFFFF).to_bytes(length=4, byteorder='little')
 				self.memory[addr:addr+4] = value
 
 			case Token(type=OpTypes.OP_LOAD32, value=val):
@@ -1158,8 +1163,8 @@ class Interpreter(Engine):
 				self.push(int.from_bytes(self.memory[addr:addr+4], byteorder="little"))
 
 			case Token(type=OpTypes.OP_STORE64, value=val):
-				value = (self.pop() & 0xFFFFFFFFFFFFFFFF).to_bytes(length=8, byteorder='little')
 				addr = self.pop()
+				value = (self.pop() & 0xFFFFFFFFFFFFFFFF).to_bytes(length=8, byteorder='little')
 				self.memory[addr:addr+8] = value
 
 			case Token(type=OpTypes.OP_LOAD64, value=val):
