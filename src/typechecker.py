@@ -54,12 +54,12 @@ class Type:
 		return ((self.name == other.name
 				if other.name != 'ANY' and self.name != 'ANY'
 				else True) and (self.parent == other.parent)) if other is not None else False
-#	def __repr__(self):
-#		w = f"{self.name}"
-#		n = self
-#		while (n := n.parent):
-#			w = f"{n.name}[{w}]"
-#		return w
+	def __repr__(self):
+		w = f"{self.name}"
+		n = self
+		while (n := n.parent):
+			w = f"{n.name}[{w}]"
+		return w
 	def __hash__(self):
 		return hash(repr(self))
 
@@ -138,6 +138,7 @@ class _TypeChecker:
 		return a_token, a_type
 
 	def check_same(self, length: int, token: Token) -> Type:
+		self.length_check(length, token)
 		a_token, expected = self.stack.pop()
 		for i in range(1, length):
 			b_token, b_type = self.stack.pop()
@@ -389,27 +390,27 @@ class _TypeChecker:
 
 				case Token(type=Operands.OP_EQ, value=val):
 					t = self.check_same(2, token)
-					self.stack.append((token, t))
+					self.stack.append((token, BOOL))
 
 				case Token(type=Operands.OP_NE, value=val):
 					t = self.check_same(2, token)
-					self.stack.append((token, t))
+					self.stack.append((token, BOOL))
 
 				case Token(type=Operands.OP_GT, value=val):
 					t = self.check_same(2, token)
-					self.stack.append((token, t))
+					self.stack.append((token, BOOL))
 
 				case Token(type=Operands.OP_GE, value=val):
 					t = self.check_same(2, token)
-					self.stack.append((token, t))
+					self.stack.append((token, BOOL))
 
 				case Token(type=Operands.OP_LT, value=val):
 					t = self.check_same(2, token)
-					self.stack.append((token, t))
+					self.stack.append((token, BOOL))
 
 				case Token(type=Operands.OP_LE, value=val):
 					t = self.check_same(2, token)
-					self.stack.append((token, t))
+					self.stack.append((token, BOOL))
 
 				case Token(type=OpTypes.OP_DUMP, value=val):
 					self.check([ANY], token)
@@ -549,24 +550,26 @@ class _TypeChecker:
 					self.stack.append((token, PTR[ANY]))
 
 				case Token(type=OpTypes.OP_STORE, value=val):
-					self.check([CHAR, PTR[ANY]], token)
+					self.check([PTR[ANY], CHAR], token)
 				case Token(type=OpTypes.OP_STORE16, value=val):
-					self.check([INT, PTR[ANY]], token)
+					self.check([PTR[ANY], INT], token)
 				case Token(type=OpTypes.OP_STORE32, value=val):
-					self.check([INT, PTR[ANY]], token)
+					self.check([PTR[ANY], INT], token)
 				case Token(type=OpTypes.OP_STORE64, value=val):
-					self.check([INT, PTR[ANY]], token)
-
+					self.check([PTR[ANY], INT], token)
 
 				case Token(type=OpTypes.OP_LOAD, value=val):
 					t = self.check([PTR[ANY]], token)
 					self.stack.append((token, derefType(t[0][1])))
+
 				case Token(type=OpTypes.OP_LOAD16, value=val):
 					t = self.check([PTR[ANY]], token)
 					self.stack.append((token, derefType(t[0][1])))
+
 				case Token(type=OpTypes.OP_LOAD32, value=val):
 					t = self.check([PTR[ANY]], token)
 					self.stack.append((token, derefType(t[0][1])))
+
 				case Token(type=OpTypes.OP_LOAD64, value=val):
 					t = self.check([PTR[ANY]], token)
 					self.stack.append((token, derefType(t[0][1])))
