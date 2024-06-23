@@ -388,9 +388,9 @@ class Program:
 		if not path:
 			raise FileNotFoundError()
 		try:
-			return open(Path(path.pop(0)) / query, 'r')
+			return open(Path(path[0]) / query, 'r')
 		except:
-			return self.search_path(path, query)
+			return self.search_path(path[1:], query)
 
 	def expand(self):
 		prev = None
@@ -430,7 +430,6 @@ class Program:
 
 	def process_flow_control(self):
 		stack: list[tuple[Token, FlowInfo]] = []
-		expect_do = False
 
 		while True:
 			token = (yield)
@@ -440,9 +439,6 @@ class Program:
 				case Token(type=FlowControl.OP_IF):
 					token.value = FlowInfo(token)
 					stack.append((token, token.value))
-					if expect_do:
-						raise Reporting(token.info, "", InvalidSyntax(stack[-1][0].info, 'missing a `do` before starting `if`'))
-					expect_do = True
 
 				case Token(type=FlowControl.OP_ELIF):
 					try:
@@ -451,20 +447,16 @@ class Program:
 						raise InvalidSyntax(token.info, '`elif` must be preceded by `if` or `elif`')
 					if top.type not in (FlowControl.OP_IF, FlowControl.OP_ELIF):
 						raise InvalidSyntax(top.info, '`elif` must be preceded by `if` or `elif`')
-					if expect_do:
 						raise Reporting(token.info, "", InvalidSyntax(top.info, 'missing a `do` before starting `elif`'))
 					token.value = FlowInfo(root=flow.root, prev=top)
 					flow.next = token
 					stack.append((token, token.value))
-					expect_do = True
 
 				case Token(type=FlowControl.OP_ELSE):
 					try:
 						top, flow = stack.pop()
 					except:
 						raise InvalidSyntax(token.info, '`else` must be preceded by `if` or `elif`')
-					if expect_do:
-						raise Reporting(token.info, "", InvalidSyntax(top.info, 'missing a `do` before starting `else`'))
 					if top.type not in (FlowControl.OP_IF, FlowControl.OP_ELIF):
 						raise InvalidSyntax(top.info, '`else` must be preceded by `if` or `elif`')
 					token.value = FlowInfo(root=flow.root, prev=top)
@@ -476,8 +468,6 @@ class Program:
 						top, flow = stack.pop()
 					except:
 						raise InvalidSyntax(token.info, '`end` token without block start')
-					if expect_do:
-						raise Reporting(token.info, "", InvalidSyntax(top.info, 'missing a `do` before closing'))
 
 					token.value = FlowInfo(root=flow.root, prev=top)
 					if top.type is PreprocTypes.MACRO:
@@ -497,15 +487,10 @@ class Program:
 							node = node.value.prev
 
 				case Token(type=FlowControl.OP_WHILE):
-					if expect_do:
-						raise Reporting(token.info, "", InvalidSyntax(stack[-1][0].info, 'missing a `do` before starting `while`'))
 					token.value = FlowInfo(token)
 					stack.append((token, token.value))
-					expect_do = True
 
 				case Token(type=FlowControl.OP_DO):
-					if not expect_do:
-						raise InvalidSyntax(token.info, '`do` without preceding flow control')
 					try:
 						top, flow = stack.pop()
 					except:
@@ -514,11 +499,8 @@ class Program:
 						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif` or `while`")
 					token.value = flow
 					stack.append((top, flow))
-					expect_do = False
 					
 				case Token(type=PreprocTypes.MACRO):
-					if expect_do:
-						raise Reporting(token.info, "", InvalidSyntax(stack[-1][0].info, 'missing a `do` before starting `macro`'))
 					token.value = FlowInfo(token)
 					if self._in_macro:
 						raise InvalidSyntax(token.info, f"nested macro definition is not allowed")
