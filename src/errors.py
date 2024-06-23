@@ -13,11 +13,14 @@ class TypeCheckerException(LangExceptions): pass
 class NotEnoughTokens(TypeCheckerException): pass
 class InvalidType(TypeCheckerException): pass
 
-class IfException(TypeCheckerException): pass
-class ElseException(TypeCheckerException): pass
-class WhileException(TypeCheckerException): pass
-class MissingToken(TypeCheckerException): pass
-class AddedToken(TypeCheckerException): pass
+class BlockException(TypeCheckerException): pass
+class IfException(BlockException): pass
+class ElifException(BlockException): pass
+class ElseException(BlockException): pass
+class WhileException(BlockException): pass
+
+class MissingToken(BlockException): pass
+class AddedToken(BlockException): pass
 
 class TypeWarning(TypeCheckerException): pass
 class StackNotEmpty(TypeWarning): pass

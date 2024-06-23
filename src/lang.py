@@ -39,6 +39,7 @@ from .errors import (
 	SymbolRedefined,
 	FileError,
 	Stopped,
+	Reporting,
 )
 
 from .error_trace import (
@@ -48,13 +49,14 @@ from .error_trace import (
 def PUSH(val: int, info=None)    -> Token: return Token(OpTypes.OP_PUSH, val, info=info)
 def CHAR(val: int, info=None)    -> Token: return Token(OpTypes.OP_CHAR, val, info=info)
 def STRING(val: str, info=None)  -> Token: return Token(OpTypes.OP_STRING, val, info=info)
+def BOOL(val: bool, info=None)   -> Token: return Token(OpTypes.OP_BOOL, val, info=info)
 def WORD(val: str, info=None)    -> Token: return Token(OpTypes.OP_WORD, val, info=info)
 def DROP(info=None)              -> Token: return Token(Intrinsics.OP_DROP, info=info)
 def DUP(info=None)               -> Token: return Token(Intrinsics.OP_DUP, info=info)
 def DUP2(info=None)              -> Token: return Token(Intrinsics.OP_DUP2, info=info)
 def SWAP(info=None)              -> Token: return Token(Intrinsics.OP_SWAP, info=info)
 def OVER(info=None)              -> Token: return Token(Intrinsics.OP_OVER, info=info)
-def ROT(info=None)              -> Token: return Token(Intrinsics.OP_ROT, info=info)
+def ROT(info=None)               -> Token: return Token(Intrinsics.OP_ROT, info=info)
 def RROT(info=None)              -> Token: return Token(Intrinsics.OP_RROT, info=info)
 
 def PLUS(info=None)              -> Token: return Token(Operands.OP_PLUS, info=info)
@@ -193,6 +195,8 @@ def unescape_string(s):
 
 
 KEYWORDS = {
+	"true":      (lambda val, info: BOOL(True, info=info)),
+	"false":     (lambda val, info: BOOL(False, info=info)),
 	"dump":      (lambda val, info: DUMP(info=info)),
 	"udump":     (lambda val, info: UDUMP(info=info)),
 	"blsh":      (lambda val, info: OP_BLSH(info=info)),
@@ -426,6 +430,7 @@ class Program:
 
 	def process_flow_control(self):
 		stack: list[tuple[Token, FlowInfo]] = []
+		expect_do = False
 
 		while True:
 			token = (yield)
@@ -435,53 +440,90 @@ class Program:
 				case Token(type=FlowControl.OP_IF):
 					token.value = FlowInfo(token)
 					stack.append((token, token.value))
+					if expect_do:
+						raise Reporting(token.info, "", InvalidSyntax(stack[-1][0].info, 'missing a `do` before starting `if`'))
+					expect_do = True
 
 				case Token(type=FlowControl.OP_ELIF):
-					top, flow = stack.pop()
+					try:
+						top, flow = stack.pop()
+					except:
+						raise InvalidSyntax(token.info, '`elif` must be preceded by `if` or `elif`')
 					if top.type not in (FlowControl.OP_IF, FlowControl.OP_ELIF):
 						raise InvalidSyntax(top.info, '`elif` must be preceded by `if` or `elif`')
-					token.value = FlowInfo(flow.root)
+					if expect_do:
+						raise Reporting(token.info, "", InvalidSyntax(top.info, 'missing a `do` before starting `elif`'))
+					token.value = FlowInfo(root=flow.root, prev=top)
 					flow.next = token
 					stack.append((token, token.value))
+					expect_do = True
 
 				case Token(type=FlowControl.OP_ELSE):
-					top, flow = stack.pop()
+					try:
+						top, flow = stack.pop()
+					except:
+						raise InvalidSyntax(token.info, '`else` must be preceded by `if` or `elif`')
+					if expect_do:
+						raise Reporting(token.info, "", InvalidSyntax(top.info, 'missing a `do` before starting `else`'))
 					if top.type not in (FlowControl.OP_IF, FlowControl.OP_ELIF):
-						raise InvalidSyntax(top.info, '`elif` must be preceded by `if` or `elif`')
-					token.value = FlowInfo(flow.root)
+						raise InvalidSyntax(top.info, '`else` must be preceded by `if` or `elif`')
+					token.value = FlowInfo(root=flow.root, prev=top)
 					flow.next = token
 					stack.append((token, token.value))
 
 				case Token(type=FlowControl.OP_END):
-					top, flow = stack.pop()
-					token.value = FlowInfo(flow.root)
+					try:
+						top, flow = stack.pop()
+					except:
+						raise InvalidSyntax(token.info, '`end` token without block start')
+					if expect_do:
+						raise Reporting(token.info, "", InvalidSyntax(top.info, 'missing a `do` before closing'))
+
+					token.value = FlowInfo(root=flow.root, prev=top)
 					if top.type is PreprocTypes.MACRO:
 						self.parse_macro(self.instructions[top.value.root.position:token.position])
-						for i in reversed(range(top.value.root.position, token.position+1)):
+						for i in reversed(range(top.position, token.position+1)):
 							self.instructions.pop(i)
 							self._position -= 1
+						self._in_macro = 0
 					else:
-						node = flow.root
+						node = token
+						haselse = False
 						while node:
+							if node.type == FlowControl.OP_ELSE:
+								haselse = True
+							node.value.haselse = haselse
 							node.value.end = token
-							node = node.value.next
+							node = node.value.prev
 
 				case Token(type=FlowControl.OP_WHILE):
+					if expect_do:
+						raise Reporting(token.info, "", InvalidSyntax(stack[-1][0].info, 'missing a `do` before starting `while`'))
 					token.value = FlowInfo(token)
 					stack.append((token, token.value))
+					expect_do = True
 
 				case Token(type=FlowControl.OP_DO):
-					top, flow = stack.pop()
+					if not expect_do:
+						raise InvalidSyntax(token.info, '`do` without preceding flow control')
+					try:
+						top, flow = stack.pop()
+					except:
+						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif` or `while`")
 					if top.type not in [FlowControl.OP_IF, FlowControl.OP_ELIF, FlowControl.OP_WHILE]:
 						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif` or `while`")
 					token.value = flow
 					stack.append((top, flow))
+					expect_do = False
 					
 				case Token(type=PreprocTypes.MACRO):
+					if expect_do:
+						raise Reporting(token.info, "", InvalidSyntax(stack[-1][0].info, 'missing a `do` before starting `macro`'))
 					token.value = FlowInfo(token)
 					if self._in_macro:
 						raise InvalidSyntax(token.info, f"nested macro definition is not allowed")
 					self._in_macro = 1
+					stack.append((token, token.value))
 
 		if stack:
 			raise InvalidSyntax(stack[-1][0].info, "is missing an end")

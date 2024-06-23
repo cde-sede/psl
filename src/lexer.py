@@ -68,6 +68,7 @@ class OpTypes(TypesType):
 	OP_PUSH		 = auto()
 	OP_STRING	 = auto()
 	OP_CHAR		 = auto()
+	OP_BOOL		 = auto()
 
 	OP_WORD		 = auto()
 
@@ -144,9 +145,12 @@ class TokenInfo:
 
 @dataclass
 class FlowInfo:
-	root: 'Token' # OP_IF or OP_WHILE
+	root: 'Token' # OP_IF | OP_WHILE | OP_MACRO
+	prev: Optional['Token'] = None
 	next: Optional['Token'] = None
 	end: Optional['Token'] = None
+
+	haselse: bool = False
 
 class Token:
 	__slots__ = ("type", "value", "info", "id", "position")

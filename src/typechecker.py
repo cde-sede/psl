@@ -2,6 +2,7 @@ from .lexer import (
 	Token,
 	FlowInfo,
 	FlowControl,
+	TypesType,
 	OpTypes,
 	Intrinsics,
 	Operands,
@@ -15,11 +16,14 @@ from .errors import (
 	InvalidType,
 	TypeCheckerException,
 	MissingToken,
-	WhileException,
 	AddedToken,
-	ElseException,
-	IfException,
 	StackNotEmpty,
+
+	BlockException,
+	IfException,
+	ElifException,
+	ElseException,
+	WhileException,
 )
 
 from enum import Enum, auto
@@ -107,6 +111,7 @@ class _TypeChecker:
 	def __init__(self):
 		self.stack: list[tuple[Token, Type]] = []
 		self.block_stack: list[list[tuple[Token, Type]]] = []
+		self.block_origin_stack: list[list[tuple[Token, Type]]] = []
 		self.last_case = -1
 
 	def __iter__(self):
@@ -175,6 +180,15 @@ class _TypeChecker:
 			valid = new
 		return next(filter(lambda x: x[1], enumerate(valid)))[0], stack_types
 
+	def cmp_stack(self, stack, prev, block: BlockException):
+		if len(stack) > len(prev):
+			raise AddedToken(stack[-1][0].info, "was added", block)
+		if len(stack) < len(prev):
+			raise MissingToken(prev[-1][0].info, "is missing", block)
+		for i, j in zip(prev, stack):
+			if i[1] != j[1]:
+				raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", block))
+
 	@property
 	def last_type(self) -> Type | None:
 		if self.stack:
@@ -202,6 +216,9 @@ class _TypeChecker:
 
 				case Token(type=OpTypes.OP_PUSH, value=val):
 					self.stack.append((token, INT))
+
+				case Token(type=OpTypes.OP_BOOL, value=val):
+					self.stack.append((token, BOOL))
 
 				case Token(type=OpTypes.OP_CHAR, value=val):
 					self.stack.append((token, CHAR))
@@ -466,62 +483,59 @@ class _TypeChecker:
 					self.check([INT], token)
 
 				case Token(type=FlowControl.OP_IF, value=val):
-					#					self.check([BOOL], token)
-					self.block_stack.append([(a, b) for a, b in self.stack])
+					self.block_stack.append(self.stack.copy())
+					self.block_origin_stack.append(self.stack.copy())
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_ELIF, value=val):
+
 					prev = self.block_stack.pop()
-					self.block_stack.append([(a, b) for a, b in self.stack])
-					self.stack = prev
+					flowinfo: FlowInfo = val
+
+					assert flowinfo.prev, 'should have been caught as a parse error'
+					if flowinfo.prev.type == FlowControl.OP_IF and not flowinfo.haselse:
+						self.cmp_stack(self.stack, prev, IfException(token.info, ''))
+					if flowinfo.prev.type == FlowControl.OP_ELIF:
+						self.cmp_stack(self.stack, prev, ElifException(token.info, ''))
+
+					self.block_stack.append(self.stack.copy())
+					self.stack = self.block_origin_stack[-1].copy()
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_ELSE, value=val):
+
 					prev = self.block_stack.pop()
-					self.block_stack.append([(a, b) for a, b in self.stack])
-					self.stack = prev
+
+					flowinfo: FlowInfo = val
+					assert flowinfo.prev, 'should have been caught as a parse error'
+					if flowinfo.prev.type == FlowControl.OP_ELIF:
+						self.cmp_stack(self.stack, prev, ElseException(token.info, ''))
+
+					self.block_stack.append(self.stack.copy())
+					self.stack = self.block_origin_stack[-1].copy()
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_WHILE, value=val):
-					self.block_stack.append([(a, b) for a, b in self.stack])
+					self.block_origin_stack.append(self.stack.copy())
+					self.block_stack.append(self.stack.copy())
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_DO, value=val):
 					self.check([BOOL], token)
-					prev = self.block_stack[-1]
 					self.last_case = -1
 
-					if len(prev) > len(self.stack):
-						raise MissingToken(prev[-1][0].info, "is missing", WhileException(token.info, "block from `while` until `do` should push a boolean on the stack"))
-					if len(prev) < len(self.stack):
-						raise AddedToken(self.stack[-1][0].info, "was added", WhileException(token.info, "block from `while` until `do` should only push a boolean on the stack"))
-					for i, j in zip(prev, self.stack):
-						if i[1] != j[1]:
-							raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", WhileException(val.root.info, "block from `while` until `do` must conserve stack")))
+					if val.root.type == FlowControl.OP_WHILE:
+						prev = self.block_stack[-1]
+						if len(prev) != len(self.stack):
+							raise WhileException(self.stack[-1][0].info, "Overflow error. `while` until `do` needs to only push 1 bool")
 
 				case Token(type=FlowControl.OP_END, value=val):
 					self.last_case = -1
+					prev = self.block_stack.pop()
 					if val.root.type in [FlowControl.OP_WHILE,]:
-						prev = self.block_stack[-1]
-
-						if len(prev) > len(self.stack):
-							raise MissingToken(prev[-1][0].info, "was removed", WhileException(token.info, "`while` blocks must conserve stack size"))
-						if len(prev) < len(self.stack):
-							raise AddedToken(self.stack[-1][0].info, "was added", WhileException(token.info, "`while` blocks must conserve stack size"))
-						for i, j in zip(prev, self.stack):
-							if i[1] != j[1]:
-								raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", WhileException(val.root.info, "`while` blocks must conserve stack")))
-						self.stack = prev
-					elif val.root.type in [FlowControl.OP_IF, FlowControl.OP_ELIF]:
-						prev_stack = self.block_stack.pop()
-						if len(prev_stack) > len(self.stack):
-							raise MissingToken(prev_stack[-1][0].info, "is missing or was added", IfException(val.root.info, "Stack not conserved"))
-						if len(prev_stack) < len(self.stack):
-							raise AddedToken(self.stack[-1][0].info, "is missing or was added", IfException(val.root.info, "Stack not conserved"))
-						for i, j in zip(prev_stack, self.stack):
-							if i[1] != j[1]:
-								raise Reporting(j[0].info, "", Reporting(i[0].info, "got changed by", IfException(val.root.info, "Stack not conserved")))
-						self.stack = prev_stack
+						self.cmp_stack(self.stack, prev, WhileException(token.info, ''))
+					elif val.root.type in [FlowControl.OP_IF,]:
+						self.cmp_stack(self.stack, prev, IfException(token.info, ''))
 					else:
 						raise RuntimeError(NotImplemented, token)
 

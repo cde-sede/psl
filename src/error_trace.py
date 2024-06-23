@@ -35,6 +35,7 @@ def trace(error):
 	else:
 		print(f"\033[31mError: {token.file} line {token.start[0] + 1}: {error.__class__.__name__}:\033[0m\n", file=sys.stderr, end='')
 	print(token.error(), file=sys.stderr)
-	print(msg, file=sys.stderr, end='\n\n')
+	if msg:
+		print(msg, file=sys.stderr, end='\n\n')
 #	raise error
 

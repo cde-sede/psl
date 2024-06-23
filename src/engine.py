@@ -246,6 +246,10 @@ class Compiler(Engine):
 				self.block("push char", instruction)
 				self.asm1("push", f"{val:.0f}")
 
+			case Token(type=OpTypes.OP_BOOL, value=val):
+				self.block("push bool", instruction)
+				self.asm1("push", f"{int(val)}")
+
 			case Token(type=OpTypes.OP_STRING, value=val):
 				self.block("push string", instruction)
 				self.asm2("mov", "rax", f"{len(val)}")
@@ -836,6 +840,9 @@ class Interpreter(Engine):
 			case Token(type=OpTypes.OP_CHAR, value=val):
 				self.queue.put(val)
 
+			case Token(type=OpTypes.OP_BOOL, value=val):
+				self.queue.put(int(val))
+
 			case Token(type=OpTypes.OP_STRING, value=val):
 				if instruction in self.strs:
 					l, p = self.strs[instruction]
@@ -1112,7 +1119,7 @@ class Interpreter(Engine):
 
 			case Token(type=FlowControl.OP_END, value=val, position=p):
 				if val.root.type in [FlowControl.OP_WHILE,]:
-					return val.position - p
+					return val.root.position - p
 
 			case Token(type=Intrinsics.OP_MEM, value=val):
 				self.push(1 + STR_CAPACITY + ARGV_CAPACITY)
