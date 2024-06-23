@@ -1,0 +1,28 @@
+macro sizeof(str) 16 end
+macro str.count 0 + end
+macro str.data  8 + end
+
+macro @str
+	dup str.count @64 swap str.data @64
+end
+
+macro read_line 
+	dup2 str.data @64 swap str.data !64
+	over str.count 0 swap !64
+	while 
+		if dup str.count @64 0 > do
+			dup str.data @64 :char* @ '\n' !=
+		else
+			false
+		end
+	do
+		dup str.count dec64
+		dup str.data  inc64
+		swap dup str.count inc64 swap
+	end
+	if dup str.count @64 0 > do
+		dup str.count dec64
+		dup str.data  inc64
+	end
+	drop2
+end
