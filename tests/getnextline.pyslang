@@ -7,9 +7,7 @@ macro content statbuf sizeof(stat) + end
 macro line content sizeof(str) + end
 
 if argc 2 < do
-	"Usage: " eputstr
-	0 nth_argv from_cstr eputstr
-	" <file>\n" eputstr
+	"Usage: " eputstr 0 nth_argv from_cstr eputstr " <file>\n" eputstr
 	"ERROR: No file provided" eputstr
 	0 exit
 end
@@ -21,18 +19,19 @@ AT_FDCWD
 openat
 
 if dup 0 < do
-	"ERROR: could not open file " eputstr 1 nth_argv from_cstr eputstr
+	"ERROR: could not open file " eputstr 1 nth_argv from_cstr eputstr "\n" eputstr
 	1 exit
 end
 
 fd !64
 
 if statbuf fd @64 fstat 0 < do
-	"ERROR: could not determine the size of file " eputstr 1 nth_argv from_cstr eputstr
+	"ERROR: could not determine the size of file " eputstr 1 nth_argv from_cstr eputstr "\n" eputstr
 	1 exit
 end
 
 statbuf stat.st_size @64 content str.count !64
+
 
 0                     // offset
 fd @64                // fd
@@ -50,8 +49,8 @@ end
 
 while content str.count @64 0 > do
 	line content read_line
-	"|" putstr
-	line @str putstr
-	"|\n" putstr 
+	' ' line ltrim
+	'\t' line ltrim
+	"|" putstr line @str putstr "|\n" putstr
 end
 0 exit

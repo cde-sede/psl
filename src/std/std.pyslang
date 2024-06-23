@@ -1,3 +1,10 @@
+macro NULL 0 end
+macro nop end
+macro inc64 dup @64 ++ swap !64 end
+macro dec64 dup @64 -- swap !64 end
+
+macro drop2 drop drop end
+
 macro SYS_read                   0 end
 macro SYS_write                  1 end
 macro SYS_open                   2 end
@@ -332,55 +339,35 @@ macro SYS_pkey_alloc             330 end
 macro SYS_pkey_free              331 end
 macro SYS_statx                  332 end
 
-macro itoa
-	dup 0 != if
-		0 swap
-		while dup 0 != do
-			10 /% '0' + swap
-		end drop
-
-		mem
-		while over 0 != do
-			swap dup2 store drop
-			1 +
-		end
-		swap drop
-		dup 0 !
-		mem - mem
-	else
-		drop mem '0' ! mem 1 + 0 !
-		1 mem
-	end
-end
-
 macro stdin  1 end
 macro stdout 1 end
 macro stderr 2 end
 
-macro read	SYS_read  syscall3 end
-macro write	SYS_write syscall3 end
-macro open	SYS_open  syscall3 end
-macro close	SYS_close syscall1 end
+macro O_RDONLY 0 end
+macro O_WRONLY 1 end
+macro O_RDWR   2 end
+ 
+macro MAP_SHARED  1 end
+macro MAP_PRIVATE 2 end
 
-macro ANSI_ESC "\033[" write drop end
+macro PROT_READ  1 end
+macro PROT_WRITE 2 end
+macro PROT_EXEC  4 end
 
-macro ANSI_RESET	ANSI_ESC "0m" write drop end
 
-macro ANSI_BLACK	ANSI_ESC "30m" write drop end
-macro ANSI_RED		ANSI_ESC "31m" write drop end
-macro ANSI_GREEN	ANSI_ESC "32m" write drop end
-macro ANSI_YELLOW	ANSI_ESC "33m" write drop end
-macro ANSI_BLUE		ANSI_ESC "34m" write drop end
-macro ANSI_PURPLE	ANSI_ESC "35m" write drop end
-macro ANSI_CYAN		ANSI_ESC "36m" write drop end
-macro ANSI_WHITE	ANSI_ESC "37m" write drop end
+macro AT_FDCWD -100 end
 
-macro ANSI_COLOR
-	"\033[38;2;" write drop
-	itoa write ";" write drop
-	itoa write ";" write drop
-	itoa write "m" write drop
-end
+macro read	 SYS_read   syscall3 end
+macro write	 SYS_write  syscall3 end
+macro open	 SYS_open   syscall3 end
+macro close	 SYS_close  syscall1 end
+macro openat SYS_openat syscall3 end
+macro fstat  SYS_fstat  syscall2 end
+macro mmap   SYS_mmap   syscall6 end
+
+macro fputstr write drop end
+macro  putstr stdout fputstr end
+macro eputstr stderr fputstr end
 
 macro strlen
 	:int
@@ -388,7 +375,44 @@ macro strlen
 	while dup :int* load 0 != do
 		++ swap
 		++ swap
-	end
-	drop
+	end drop
 	:char*
 end
+
+macro from_cstr
+	dup strlen swap
+end
+
+macro nth_argv argv + @64 end
+
+macro sizeof(stat) 144 end
+
+macro stat.st_dev     :int   0 + :int* end // ID of device containing file
+macro stat.st_ino     :int   8 + :int* end // Inode number
+macro stat.st_mode    :int  24 + :int* end // File type and mode
+macro stat.st_nlink   :int  16 + :int* end // Number of hard links
+macro stat.st_uid     :int  28 + :int* end // User ID of owner
+macro stat.st_gid     :int  32 + :int* end // Group ID of owner
+macro stat.st_rdev    :int  40 + :int* end // Device ID (if special file)
+macro stat.st_size    :int  48 + :int* end // Total size, in bytes
+macro stat.st_blksize :int  56 + :int* end // Block size for filesystem I/O
+macro stat.st_blocks  :int  64 + :int* end // Number of 512B blocks allocated
+macro stat.st_atim    :int  72 + :int* end // Time of last access
+macro stat.st_mtim    :int  88 + :int* end // Time of last modification
+macro stat.st_ctim    :int 104 + :int* end // Time of last status change
+
+macro sizeof(st_dev)      8 end
+macro sizeof(st_ino)      8 end
+macro sizeof(st_mode)     4 end
+macro sizeof(st_nlink)    8 end
+macro sizeof(st_uid)      4 end
+macro sizeof(st_gid)      4 end
+macro sizeof(st_rdev)     8 end
+macro sizeof(st_size)     8 end
+macro sizeof(st_blksize)  8 end
+macro sizeof(st_blocks)   8 end
+macro sizeof(st_atim)    16 end
+macro sizeof(st_mtim)    16 end
+macro sizeof(st_ctim)    16 end
+
+
