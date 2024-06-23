@@ -3,20 +3,19 @@ EXE = $(SRC:%.pyslang=%)
 DAT = $(SRC:%.pyslang=%.out)
 
 command = python3.12 test.py
-args = $(SRC:%.pyslang=-s='%.out')
+testargs = $(SRC:%.pyslang=-s'%.out')
+saveargs = $(SRC:%.pyslang=-s'%.pyslang')
 
 all: test
 
-test: $(DAT)
-	${command} test ${args}
+test:
+	${command} test ${testargs}
 
-show: $(DAT)
-	${command} show ${args}
+show:
+	${command} show ${testargs}
 
-save: $(DAT)
-
-%.out: %.pyslang
-	${command} save -s $< -o $@ -a'1' -a'2' -a'3' -a'4'
+save:
+	${command} save ${saveargs} -a'1' -a'2' -a'3' -a'4'
 
 re: fclean all
 

@@ -16,8 +16,7 @@ if __name__ == '__main__':
 	sshow.add_argument('-s', '--source', required=True, nargs='*', action='extend')
 
 	ssave = sub.add_parser("save")
-	ssave.add_argument('-o', '--output', required=True)
-	ssave.add_argument('-s', '--source', required=True)
+	ssave.add_argument('-s', '--source', required=True, nargs='*', action='extend')
 	ssave.add_argument('-a', '--args', required=True, nargs='*', action='extend')
 	ssave.add_argument('-A', '--cargs', nargs='*', default=[])
 	ssave.add_argument('--stdin', default=None)
@@ -39,6 +38,7 @@ if __name__ == '__main__':
 				print(f"{errc} {erri}")
 				print('---------------')
 				print(f"{failurec} {failurei}")
+
 	if args.instruction == 'test':
 		print(args)
 		for s in args.source:
@@ -63,26 +63,28 @@ if __name__ == '__main__':
 					failure = 1
 
 	elif args.instruction == 'save':
-		buffer = BytesIO()
-		with open(args.output, 'wb') as buffer:
-			tester.save(buffer,
-				  ["python", "-m", "src", "compile",
-				  f"-s{args.source}",
-				  f"-o{Path(args.source).stem}",
-				  "--exec",
-				  "-I./src/std/",
-				  *[ i for i in args.cargs ],
-				  *[ f"-A{i}" for i in args.args ],
-				  ],
-				  args.stdin)
-			tester.save(buffer,
-				  ["python", "-m", "src", "interpret",
-				  f"-s{args.source}",
-				  "-I./src/std/",
-				  *[ i for i in args.cargs ],
-				  *[ f"-A{i}" for i in args.args ],
-				  ],
-				  args.stdin)
+		for s in args.source:
+			buffer = BytesIO()
+			o = Path(s).with_suffix('.out')
+			with open(o, 'wb') as buffer:
+				tester.save(buffer,
+					  ["python", "-m", "src", "compile",
+					  f"-s{s}",
+					  f"-o{Path(s).with_suffix('')}",
+					  "--exec",
+					  "-I./src/std/",
+					  *[ i for i in args.cargs ],
+					  *[ f"-A{i}" for i in args.args ],
+					  ],
+					  args.stdin)
+				tester.save(buffer,
+					  ["python", "-m", "src", "interpret",
+					  f"-s{s}",
+					  "-I./src/std/",
+					  *[ i for i in args.cargs ],
+					  *[ f"-A{i}" for i in args.args ],
+					  ],
+					  args.stdin)
 
 #python
 #test.py
