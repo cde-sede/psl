@@ -21,6 +21,7 @@ class WhileException(BlockException): pass
 
 class MissingToken(BlockException): pass
 class AddedToken(BlockException): pass
+class ProcedureError(BlockException): pass
 
 class TypeWarning(TypeCheckerException): pass
 class StackNotEmpty(TypeWarning): pass

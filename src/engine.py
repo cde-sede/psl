@@ -189,8 +189,6 @@ class Compiler(Engine):
 		self.asm1('global', '_start')
 		self.label('\n_start')
 		self.asm2("mov", "qword [ARGS_PTR]", "rsp")
-		self.asm2("mov", "rax", "ret_stack_end")
-		self.asm2("mov", "qword [ret_stack_rsp]", "rax")
 
 
 	def before(self, program) -> None:
@@ -675,27 +673,29 @@ class Compiler(Engine):
 				self.label(instruction.label())
 
 			case Token(type=FlowControl.OP_DO, value=val):
-				self.block("DO", instruction)
-				self.label(instruction.label())
-				self.asm1("pop", "rax")
-				self.asm2("test", "rax", "rax")
-				if val.next:
-					self.asm1("jz", f"{val.next.label()}")
-				else:
-					self.asm1("jz", f"{val.end.label()}")
+				if val.root.type in [FlowControl.OP_WHILE, FlowControl.OP_IF, FlowControl.OP_ELIF]:
+					self.block("DO", instruction)
+					self.label(instruction.label())
+					self.asm1("pop", "rax")
+					self.asm2("test", "rax", "rax")
+					if val.next:
+						self.asm1("jz", f"{val.next.label()}")
+					else:
+						self.asm1("jz", f"{val.end.label()}")
 
 			case Token(type=FlowControl.OP_RET, value=val):
+				arg_count = len(val.value.next.value.data) - 1
 				self.block("RET", instruction)
-				self.asm2("mov", "rax", "rsp")
-				self.asm2("mov", "rsp", "[ret_stack_rsp]")
-				self.asm("ret")
+				self.asm1("pop", "rbp")
+				self.asm2("mov", "rax", "rbp")
+				self.asm1("ret", f"{arg_count * 8}")
 
 			case Token(type=FlowControl.OP_END, value=val):
 				if val.root.type in [PreprocTypes.PROC,]:
+					arg_count = len(val.root.value.next.value.data) - 1
 					self.block("RET", instruction)
-					self.asm2("mov", "rax", "rsp")
-					self.asm2("mov", "rsp", "[ret_stack_rsp]")
-					self.asm("ret")
+					self.asm1("pop", "rbp")
+					self.asm1("ret", f"{arg_count * 8}")
 					self.label(instruction.label())
 				else:
 					self.block("END", instruction)
@@ -822,18 +822,33 @@ class Compiler(Engine):
 
 			case Token(type=PreprocTypes.CALL, value=val):
 				self.block(f"CALL {val}", instruction)
-				self.asm2("mov", "rax", "rsp")
-				self.asm2("mov", "rsp", "[ret_stack_rsp]")
 				self.asm1("call", f"{self.procs[val].label()}")
-				self.asm2("mov", "[ret_stack_rsp]", "rsp")
-				self.asm2("mov", "rsp", "rax")
 
 			case Token(type=PreprocTypes.PROC, value=val):
-				self.procs[val.data[0].value] = instruction
+				name = val.next.value.data[0].value
+				self.procs[name] = instruction
 				self.asm1("jmp", f"{val.end.label()}")
 				self.label(instruction.label())
-				self.asm2("mov", "[ret_stack_rsp]", "rsp")
-				self.asm2("mov", "rsp", "rax")
+				self.asm1("push", "rbp")
+				self.asm2("mov", "rbp", "rsp")
+				for i in range(len(val.next.value.data[1:])):
+					self.asm2("mov", "rax", f"qword [rbp+{0x10 + i * 8}]")
+					self.asm1("push", "rax")
+				# TODO Stop this ret stack nonsense and just make use of some push rbp mov rbp rsp
+				#	like:
+				#
+				#  call fn			 ; push ret ptr
+				#  fn:				 ;
+				#  push rbp			 ; push old base ptr
+				#  mov rbp,rsp		 ; set current stack ptr as new base ptr
+				#  mov rax, [rbp+0x0]  ; old rbp
+				#  mov rax, [rbp+0x10]  ; ret addr
+				#  mov rax, [rbp+0x18]  ; old stack top
+				#  mov rax, [rbp+0x20]  ; old stack peek
+
+
+
+
 				return 1
 
 			case Token(type=PreprocTypes.CAST):
@@ -868,10 +883,6 @@ class Compiler(Engine):
 		self.asm1("segment", ".bss")
 		self.label(f"ARGS_PTR", nl=False); self.asm1("resq", "1")
 		
-		self.label(f"ret_stack_rsp", nl=False); self.asm1("resq", "1")
-		self.label(f"ret_stack", nl=False); self.asm1("resq", "1024") # max_recursion_limit
-		self.label(f"ret_stack_end")
-
 		for name, (size, token) in self.globals.items():
 			self.label(token.label(), nl=False)
 			self.asm1("resb", f"{size}")

@@ -1,10 +1,11 @@
-from typing import Optional, TextIO, BinaryIO, Type, cast
+from typing import Optional, TextIO, BinaryIO, Type, Any
 from pathlib import Path
 
 import os
 import sys
 import subprocess
 import shutil
+from dataclasses import dataclass
 
 from .engine import Engine, Compiler, Interpreter 
 from .typechecker import (
@@ -131,6 +132,7 @@ def MACRO(info=None)             -> Token: return Token(PreprocTypes.MACRO, info
 def CALL(val: str, info=None)    -> Token: return Token(PreprocTypes.CALL, val, info=info)
 def RET(info=None)               -> Token: return Token(FlowControl.OP_RET, info=info)
 def PROC(info=None)              -> Token: return Token(PreprocTypes.PROC, info=info)
+def IN(info=None)                -> Token: return Token(PreprocTypes.IN, info=info)
 def MEMORY(info=None)            -> Token: return Token(PreprocTypes.MEMORY, info=info)
 def INCLUDE(info=None)           -> Token: return Token(PreprocTypes.INCLUDE, info=info)
 def CAST(val: Type, info=None)   -> Token: return Token(PreprocTypes.CAST, val, info=info)
@@ -242,6 +244,7 @@ KEYWORDS = {
 	"do":        (lambda val, info: DO(info=info)),
 	"macro":     (lambda val, info: MACRO(info=info)),
 	"proc":      (lambda val, info: PROC(info=info)),
+	"in":        (lambda val, info: IN(info=info)),
 	"memory":    (lambda val, info: MEMORY(info=info)),
 	"include":   (lambda val, info: INCLUDE(info=info)),
 	"end":       (lambda val, info: END(info=info)),
@@ -295,6 +298,11 @@ class MakeException(Exception): pass
 class NASMException(Exception): pass
 class LinkerException(Exception): pass
 
+@dataclass
+class Symbol:
+	type: Any
+	data: Any
+
 class Program:
 	class Comment(Exception): ...
 	class EndLine(Exception): ...
@@ -303,10 +311,11 @@ class Program:
 		self.engine: Optional[Engine] = engine
 		self.path: Path = Path(path)
 		self.pointer = 0
-		self.symbols: dict[str, Token] = {}
-		self.globals: dict[str, Token] = {}
+		self.symbols: dict[str, Symbol] = {}
+		self.globals: dict[str, Symbol] = {}
 		self.let_depth = 0
 		self._in_preproc = 0
+		self._preproc_type = None
 		self._position = 0
 		self.includes: list[Path] = [self.path.parent, Path(os.getcwd()), Path(__file__).parent] + ([Path(i) for i in includes] if includes else [])
 
@@ -329,14 +338,12 @@ class Program:
 		if token.type == TokenTypes.WORD and token.string not in KEYWORDS:
 			if token.string in self.symbols:
 				if self.symbols[token.string].type == PreprocTypes.MEMORY:
-					return [self.symbols[token.string]]
+					return [self.symbols[token.string].data]
 				elif self.symbols[token.string].type == PreprocTypes.PROC:
-					return [CALL(token.string)]
+					return [CALL(token.string, info=token)]
 				elif self.symbols[token.string].type == PreprocTypes.MACRO:
-					return [LABEL(name=token.string, info=token), *[i.copy(token) for i in self.symbols[token.string].value]]
-			if self._in_preproc == 1 or self.let_depth:
-				return [WORD(val=token.string, info=token)]
-			raise UnknownToken(token, "Is not a registered or builtin symbol")
+					return [LABEL(name=token.string, info=token), *[i.copy(token) for i in self.symbols[token.string].data]]
+			return [WORD(val=token.string, info=token)]
 		if token.type == TokenTypes.NEW_LINE:
 			raise self.EndLine()
 		if token.type == TokenTypes.CAST:
@@ -442,24 +449,31 @@ class Program:
 		if tokens[1].info.string in self.symbols:
 			raise SymbolRedefined(tokens[1].info, "Has already been defined")
 			
-		self.symbols[tokens[1].info.string] = tokens[0]
-		tokens[0].value = tokens[2:]
+		self.symbols[tokens[1].info.string] = Symbol(PreprocTypes.MACRO, tokens[2:])
 
-	def parse_proc(self, info: FlowInfo, tokens: list[Token]):
-		assert tokens[1].info is not None
+	def parse_proc(self, root: Token, end: Token):
+		in_ = root.value.next
 
-		if len(tokens) == 1:
-			raise InvalidSyntax(tokens[0].info, "`proc` requires a name")
-		if tokens[1].type != OpTypes.OP_WORD:
-			raise InvalidSyntax(tokens[1].info, f"`proc` name must be a word not `{tokens[1].type.name}`")
-		if tokens[1].info.string in self.symbols:
-			raise SymbolRedefined(tokens[1].info, "Has already been defined")
+		args = self.instructions[root.position+1:in_.position]
+		body = self.instructions[in_.position+1:end.position]
+		if len(args) < 1:
+			raise InvalidSyntax(root.info, "`proc` requires a name")
+		if args[0].type != OpTypes.OP_WORD:
+			raise InvalidSyntax(args[0].info, f"`proc` name must be a word no `{args[0].type.name}`")
+		assert args[0].info
+		if args[0].info.string in self.symbols:
+			raise SymbolRedefined(args[0].info, "Has already been defined")
 			
-		info.data = tokens[1:]
-		self.symbols[tokens[1].info.string] = tokens[0]
+		name = args[0].info.string
+		in_.value.data = args
+		root.value.data = body
+		if body[-1].type == FlowControl.OP_RET:
+			body[-1].value = root
+			
+		self.symbols[name] = Symbol(PreprocTypes.PROC, root)
 
 	def parse_memory(self, tokens: list[Token]):
-		assert tokens[1].info is not None
+		assert tokens[1].info
 
 		if len(tokens) == 1:
 			raise InvalidSyntax(tokens[0].info, "`memory` requires a name")
@@ -468,9 +482,8 @@ class Program:
 		if tokens[1].info.string in self.symbols:
 			raise SymbolRedefined(tokens[1].info, "Has already been defined")
 
-		self.symbols[tokens[1].info.string] = tokens[0]
-		self.globals[tokens[1].info.string] = tokens[0]
-		tokens[0].value = tokens[1:]
+		self.symbols[tokens[1].info.string] = Symbol(PreprocTypes.MEMORY, tokens[1:])
+		self.globals[tokens[1].info.string] = self.symbols[tokens[1].info.string]
 
 	def process_flow_control(self):
 		stack: list[tuple[Token, FlowInfo]] = []
@@ -515,17 +528,24 @@ class Program:
 
 					token.value = FlowInfo(root=flow.root, prev=top)
 					if top.type is PreprocTypes.MACRO:
-						self.parse_macro(self.instructions[top.value.root.position:token.position])
+						self.parse_macro(self.instructions[flow.root.position:token.position])
 						for i in reversed(range(top.position, token.position+1)):
 							self.instructions.pop(i)
 							self._position -= 1
 						self._in_preproc = 0
 					elif top.type is PreprocTypes.PROC:
 						flow.end = token
-						self.parse_proc(flow, self.instructions[top.value.root.position:token.position])
+						if flow.next is None or flow.next.type is not PreprocTypes.IN:
+							raise InvalidSyntax(flow.root.info, '`proc` requires an `in` before `end`')
+							
+						assert flow.next
+						self.parse_proc(top, token)
+						for i in reversed(range(top.position+1, flow.next.position)):
+							self.instructions.pop(i)
+							self._position -= 1
 						self._in_preproc = 0
 					elif top.type is PreprocTypes.MEMORY:
-						self.parse_memory(self.instructions[top.value.root.position:token.position])
+						self.parse_memory(self.instructions[flow.root.position:token.position])
 						for i in reversed(range(top.position, token.position+1)):
 							self.instructions.pop(i)
 							self._position -= 1
@@ -534,7 +554,9 @@ class Program:
 						self.let_depth -= 1
 						if self._in_preproc:
 							continue
-						words = self.instructions[top.value.root.position+1:top.value.next.position]
+						assert flow.next
+						assert flow.next
+						words = self.instructions[flow.root.position+1:flow.next.position]
 						top.value.data = words
 						for i in reversed(range(top.position+1, top.value.next.position)):
 							self.instructions.pop(i)
@@ -581,6 +603,19 @@ class Program:
 						raise InvalidSyntax(token.info, f"nested macro definition is not allowed")
 					self._in_preproc = 1
 					stack.append((token, token.value))
+
+				case Token(type=PreprocTypes.IN, value=val):
+					try:
+						top, flow = stack.pop()
+					except:
+						raise InvalidSyntax(token.info, "`in` must be preceded by `proc`")
+					if top.type not in [PreprocTypes.PROC]:
+						raise InvalidSyntax(token.info, "`in` must be preceded by `proc`")
+					self._in_preproc = 0
+					token.value = FlowInfo(token, top)
+					flow.next = token
+					stack.append((top, flow))
+					
 
 				case Token(type=PreprocTypes.PROC, value=val):
 					if val is not None:

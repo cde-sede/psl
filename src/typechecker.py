@@ -19,6 +19,7 @@ from .errors import (
 	MissingToken,
 	AddedToken,
 	StackNotEmpty,
+	ProcedureError,
 
 	BlockException,
 	IfException,
@@ -114,6 +115,7 @@ class _TypeChecker:
 		self.block_stack: list[list[tuple[Token, Type]]] = []
 		self.block_origin_stack: list[list[tuple[Token, Type]]] = []
 		self.locals: list[dict[str, tuple[Token, Type]]] = []
+		self.procedures: dict[str, list[tuple[Token, Type]]] = {}
 		self.last_case = -1
 
 	def __iter__(self):
@@ -547,14 +549,21 @@ class _TypeChecker:
 
 				case Token(type=FlowControl.OP_END, value=val):
 					self.last_case = -1
-					if val.root.type in [PreprocTypes.PROC]:
-						continue
 					if val.root.type in [FlowControl.OP_WITH, FlowControl.OP_LET]:
 						self.locals.pop()
 						continue
 					prev = self.block_stack.pop()
 					origin = self.block_origin_stack.pop()
-					if val.root.type == FlowControl.OP_WHILE:
+					if val.root.type in [PreprocTypes.PROC]:
+						if self.stack:
+							if len(self.stack) == 1:
+								a_token, a_type = self.stack.pop()
+								raise ProcedureError(a_token.info, f"unhandled data on stack inside procedure ({a_type})", Reporting(val.root.info, ''))
+							if len(self.stack) > 1:
+								a_token, a_type = self.stack.pop()
+								raise ProcedureError(a_token.info, f"unhandled data on stack inside procedure ({a_type}) ({len(self.stack)} more)", Reporting(val.root.info, ''))
+						self.stack = prev
+					elif val.root.type == FlowControl.OP_WHILE:
 						self.cmp_stack(self.stack, prev, WhileException(token.info, ''))
 						self.stack = prev
 					elif val.root.type == FlowControl.OP_IF:
@@ -625,10 +634,20 @@ class _TypeChecker:
 					self.stack.append((token, PTR[ANY]))
 
 				case Token(type=PreprocTypes.PROC, value=val):
-					pass
+					in_ = val.next
+					name = in_.value.data[0].value
+					args = in_.value.data[1:]
+					for tok in args:
+						if tok.type != PreprocTypes.CAST:
+							raise InvalidType(tok.info, 'Procedure arguments definition can only be casts')
+					self.procedures[name] = [(tok, tok.value) for tok in args]
+					self.block_origin_stack.append(self.stack.copy())
+					self.block_stack.append([])
+					self.stack = self.procedures[name].copy()
+					self.last_case = -1
 
 				case Token(type=PreprocTypes.CALL, value=val):
-					pass
+					self.check([i[1] for i in self.procedures[val]], token)
 
 				case Token(type=FlowControl.OP_RET, value=val):
 					pass
@@ -642,5 +661,5 @@ class _TypeChecker:
 			raise StackNotEmpty(a_token.info, f"unhandled data on stack ({a_type})")
 		if len(self.stack) > 1:
 			a_token, a_type = self.stack.pop()
-			raise StackNotEmpty(a_token.info, f"unhandled data on stack ({len(self.stack)} more)")
+			raise StackNotEmpty(a_token.info, f"unhandled data on stack ({a_type}) ({len(self.stack)} more)")
 		yield

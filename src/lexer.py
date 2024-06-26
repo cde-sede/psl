@@ -18,6 +18,7 @@ class PreprocTypes(TypesType):
 	MACRO		 = auto()
 	CALL		 = auto()
 	PROC		 = auto()
+	IN			 = auto()
 	MEMORY		 = auto()
 	INCLUDE		 = auto()
 	CAST		 = auto()
