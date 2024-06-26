@@ -1,6 +1,7 @@
 OBJ_DIR = objs
 
-SRCS = dump.c
+SRCS = dump.c \
+	   memory.c
 
 OBJS = $(patsubst %.c, $(OBJ_DIR)/%.o, $(SRCS))
 

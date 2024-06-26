@@ -1,5 +1,7 @@
-macro NULL 0 end
-macro nop end
+macro NULL 0 :ptr* end
+macro nop
+	//
+end
 macro inc64 dup @64 ++ swap !64 end
 macro dec64 dup @64 -- swap !64 end
 
@@ -383,7 +385,7 @@ macro from_cstr
 	dup strlen swap
 end
 
-macro nth_argv argv + @64 end
+macro nth_argv 8 * argv + @64 end
 
 macro sizeof(stat) 144 end
 
@@ -414,5 +416,3 @@ macro sizeof(st_blocks)   8 end
 macro sizeof(st_atim)    16 end
 macro sizeof(st_mtim)    16 end
 macro sizeof(st_ctim)    16 end
-
-

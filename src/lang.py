@@ -55,6 +55,7 @@ def DROP(info=None)              -> Token: return Token(Intrinsics.OP_DROP, info
 def DUP(info=None)               -> Token: return Token(Intrinsics.OP_DUP, info=info)
 def DUP2(info=None)              -> Token: return Token(Intrinsics.OP_DUP2, info=info)
 def SWAP(info=None)              -> Token: return Token(Intrinsics.OP_SWAP, info=info)
+def SWAP2(info=None)             -> Token: return Token(Intrinsics.OP_SWAP2, info=info)
 def OVER(info=None)              -> Token: return Token(Intrinsics.OP_OVER, info=info)
 def ROT(info=None)               -> Token: return Token(Intrinsics.OP_ROT, info=info)
 def RROT(info=None)              -> Token: return Token(Intrinsics.OP_RROT, info=info)
@@ -108,10 +109,11 @@ def WHILE(info=None)             -> Token: return Token(FlowControl.OP_WHILE, in
 def DO(info=None)                -> Token: return Token(FlowControl.OP_DO, info=info)
 def END(info=None)               -> Token: return Token(FlowControl.OP_END, info=info)
 def LABEL(name, info=None)       -> Token: return Token(FlowControl.OP_LABEL, name, info=info)
+def LET(info=None)               -> Token: return Token(FlowControl.OP_LET, info=info)
+def WITH(info=None)              -> Token: return Token(FlowControl.OP_WITH, info=info)
 
 def ARGC(info=None)              -> Token: return Token(Intrinsics.OP_ARGC, info=info)
 def ARGV(info=None)              -> Token: return Token(Intrinsics.OP_ARGV, info=info)
-def MEM(info=None)               -> Token: return Token(Intrinsics.OP_MEM, info=info)
 
 def LOAD(info=None)              -> Token: return Token(OpTypes.OP_LOAD, info=info)
 def LOAD16(info=None)            -> Token: return Token(OpTypes.OP_LOAD16, info=info)
@@ -126,19 +128,24 @@ def STORE64(info=None)           -> Token: return Token(OpTypes.OP_STORE64, info
 def EXIT(info=None) -> Token: return Token(OpTypes.OP_EXIT, info=info)
 
 def MACRO(info=None)             -> Token: return Token(PreprocTypes.MACRO, info=info)
+def CALL(val: str, info=None)    -> Token: return Token(PreprocTypes.CALL, val, info=info)
+def RET(info=None)               -> Token: return Token(FlowControl.OP_RET, info=info)
+def PROC(info=None)              -> Token: return Token(PreprocTypes.PROC, info=info)
+def MEMORY(info=None)            -> Token: return Token(PreprocTypes.MEMORY, info=info)
 def INCLUDE(info=None)           -> Token: return Token(PreprocTypes.INCLUDE, info=info)
 def CAST(val: Type, info=None)   -> Token: return Token(PreprocTypes.CAST, val, info=info)
 
 
 def StrToType(s: str) -> Type | None:
 	t, l = {
-		'any':  (Types.ANY, 3),
-		'int':  (Types.INT, 3),
-		'ptr':  (Types.PTR, 3),
-		'bool': (Types.BOOL, 4),
-		'char': (Types.CHAR, 4),
+		'any':   (Types.ANY, 3),
+		'void':  (Types.ANY, 4),
+		'int':   (Types.INT, 3),
+		'ptr':   (Types.PTR, 3),
+		'bool':  (Types.BOOL, 4),
+		'char':  (Types.CHAR, 4),
 
-		'byte': (Types.CHAR, 4),
+		'byte':  (Types.CHAR, 4),
 		'dword': (Types.INT, 4),
 	}.get(s.rstrip('*'), None)
 	if t is None: return None
@@ -223,6 +230,7 @@ KEYWORDS = {
 	"dup":       (lambda val, info: DUP(info=info)),
 	"dup2":      (lambda val, info: DUP2(info=info)),
 	"swap":      (lambda val, info: SWAP(info=info)),
+	"swap2":     (lambda val, info: SWAP2(info=info)),
 	"over":      (lambda val, info: OVER(info=info)),
 	"rot":       (lambda val, info: ROT(info=info)),
 	"rrot":      (lambda val, info: RROT(info=info)),
@@ -233,9 +241,13 @@ KEYWORDS = {
 	"while":     (lambda val, info: WHILE(info=info)),
 	"do":        (lambda val, info: DO(info=info)),
 	"macro":     (lambda val, info: MACRO(info=info)),
+	"proc":      (lambda val, info: PROC(info=info)),
+	"memory":    (lambda val, info: MEMORY(info=info)),
 	"include":   (lambda val, info: INCLUDE(info=info)),
 	"end":       (lambda val, info: END(info=info)),
-	"mem":       (lambda val, info: MEM(info=info)),
+	"let":       (lambda val, info: LET(info=info)),
+	"with":      (lambda val, info: WITH(info=info)),
+	"ret":       (lambda val, info: RET(info=info)),
 	"argc":      (lambda val, info: ARGC(info=info)),
 	"argv":      (lambda val, info: ARGV(info=info)),
 	"store":     (lambda val, info: STORE(info=info)),
@@ -291,8 +303,10 @@ class Program:
 		self.engine: Optional[Engine] = engine
 		self.path: Path = Path(path)
 		self.pointer = 0
-		self.symbols = {}
-		self._in_macro = 0
+		self.symbols: dict[str, Token] = {}
+		self.globals: dict[str, Token] = {}
+		self.let_depth = 0
+		self._in_preproc = 0
 		self._position = 0
 		self.includes: list[Path] = [self.path.parent, Path(os.getcwd()), Path(__file__).parent] + ([Path(i) for i in includes] if includes else [])
 
@@ -313,11 +327,16 @@ class Program:
 				raise UnknownToken(token, "Is not a recognized symbol")
 			return [OPERANDS[token.string](token.string, token)]
 		if token.type == TokenTypes.WORD and token.string not in KEYWORDS:
-			if self._in_macro == 1:
+			if token.string in self.symbols:
+				if self.symbols[token.string].type == PreprocTypes.MEMORY:
+					return [self.symbols[token.string]]
+				elif self.symbols[token.string].type == PreprocTypes.PROC:
+					return [CALL(token.string)]
+				elif self.symbols[token.string].type == PreprocTypes.MACRO:
+					return [LABEL(name=token.string, info=token), *[i.copy(token) for i in self.symbols[token.string].value]]
+			if self._in_preproc == 1 or self.let_depth:
 				return [WORD(val=token.string, info=token)]
-			if token.string not in self.symbols:
-				raise UnknownToken(token, "Is not a registered or builtin symbol")
-			return [LABEL(name=token.string, info=token), *[i.copy(token) for i in self.symbols[token.string].value]]
+			raise UnknownToken(token, "Is not a registered or builtin symbol")
 		if token.type == TokenTypes.NEW_LINE:
 			raise self.EndLine()
 		if token.type == TokenTypes.CAST:
@@ -345,10 +364,9 @@ class Program:
 			if token.start[0] == comment: continue
 			try:
 				tokens = self.match_token(token)
-				if self._in_macro:
-					self._in_macro += 1
+				if self._in_preproc:
+					self._in_preproc += 1
 				for index, t in enumerate(tokens):
-					t.position = self._position + index
 					if debug:
 						print(t)
 					self.add(t)
@@ -427,6 +445,32 @@ class Program:
 		self.symbols[tokens[1].info.string] = tokens[0]
 		tokens[0].value = tokens[2:]
 
+	def parse_proc(self, info: FlowInfo, tokens: list[Token]):
+		assert tokens[1].info is not None
+
+		if len(tokens) == 1:
+			raise InvalidSyntax(tokens[0].info, "`proc` requires a name")
+		if tokens[1].type != OpTypes.OP_WORD:
+			raise InvalidSyntax(tokens[1].info, f"`proc` name must be a word not `{tokens[1].type.name}`")
+		if tokens[1].info.string in self.symbols:
+			raise SymbolRedefined(tokens[1].info, "Has already been defined")
+			
+		info.data = tokens[1:]
+		self.symbols[tokens[1].info.string] = tokens[0]
+
+	def parse_memory(self, tokens: list[Token]):
+		assert tokens[1].info is not None
+
+		if len(tokens) == 1:
+			raise InvalidSyntax(tokens[0].info, "`memory` requires a name")
+		if tokens[1].type != OpTypes.OP_WORD:
+			raise InvalidSyntax(tokens[1].info, f"`memory` name must be a word not `{tokens[1].type.name}`")
+		if tokens[1].info.string in self.symbols:
+			raise SymbolRedefined(tokens[1].info, "Has already been defined")
+
+		self.symbols[tokens[1].info.string] = tokens[0]
+		self.globals[tokens[1].info.string] = tokens[0]
+		tokens[0].value = tokens[1:]
 
 	def process_flow_control(self):
 		stack: list[tuple[Token, FlowInfo]] = []
@@ -475,7 +519,26 @@ class Program:
 						for i in reversed(range(top.position, token.position+1)):
 							self.instructions.pop(i)
 							self._position -= 1
-						self._in_macro = 0
+						self._in_preproc = 0
+					elif top.type is PreprocTypes.PROC:
+						flow.end = token
+						self.parse_proc(flow, self.instructions[top.value.root.position:token.position])
+						self._in_preproc = 0
+					elif top.type is PreprocTypes.MEMORY:
+						self.parse_memory(self.instructions[top.value.root.position:token.position])
+						for i in reversed(range(top.position, token.position+1)):
+							self.instructions.pop(i)
+							self._position -= 1
+						self._in_preproc = 0
+					elif top.type in [FlowControl.OP_LET, FlowControl.OP_WITH]:
+						self.let_depth -= 1
+						if self._in_preproc:
+							continue
+						words = self.instructions[top.value.root.position+1:top.value.next.position]
+						top.value.data = words
+						for i in reversed(range(top.position+1, top.value.next.position)):
+							self.instructions.pop(i)
+							self._position -= 1
 					else:
 						node = token
 						haselse = False
@@ -494,17 +557,47 @@ class Program:
 					try:
 						top, flow = stack.pop()
 					except:
-						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif` or `while`")
-					if top.type not in [FlowControl.OP_IF, FlowControl.OP_ELIF, FlowControl.OP_WHILE]:
-						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif` or `while`")
+						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif`, `while`, `let` or with")
+					if top.type not in [FlowControl.OP_IF, FlowControl.OP_ELIF, FlowControl.OP_WHILE, FlowControl.OP_LET, FlowControl.OP_WITH]:
+						raise InvalidSyntax(token.info, "`do` must be preceded by an `if`, `elif`, `while`, `let` or with")
 					token.value = flow
+					if top.type in [FlowControl.OP_LET, FlowControl.OP_WITH]:
+						flow.next = token
 					stack.append((top, flow))
 					
+				case Token(type=FlowControl.OP_LET):
+					token.value = FlowInfo(token)
+					stack.append((token, token.value))
+					self.let_depth += 1
+
+				case Token(type=FlowControl.OP_WITH):
+					token.value = FlowInfo(token)
+					stack.append((token, token.value))
+					self.let_depth += 1
+
 				case Token(type=PreprocTypes.MACRO):
 					token.value = FlowInfo(token)
-					if self._in_macro:
+					if self._in_preproc:
 						raise InvalidSyntax(token.info, f"nested macro definition is not allowed")
-					self._in_macro = 1
+					self._in_preproc = 1
+					stack.append((token, token.value))
+
+				case Token(type=PreprocTypes.PROC, value=val):
+					if val is not None:
+						continue
+					token.value = FlowInfo(token)
+					if self._in_preproc:
+						raise InvalidSyntax(token.info, f"nested proc definition is not allowed")
+					self._in_preproc = 1
+					stack.append((token, token.value))
+
+				case Token(type=PreprocTypes.MEMORY, value=val):
+					if val is not None:
+						continue
+					token.value = FlowInfo(token)
+					if self._in_preproc:
+						raise InvalidSyntax(token.info, f"nested memory definition is not allowed")
+					self._in_preproc = 1
 					stack.append((token, token.value))
 
 		if stack:
@@ -513,6 +606,7 @@ class Program:
 
 	def add(self, token: Token) -> 'Program':
 		self.instructions.append(token)
+		token.position = self._position
 		self._position += 1
 		return self
 
@@ -521,15 +615,15 @@ class Program:
 
 		if self.engine is None:
 			raise NoEngine("Add engine before running")
-		self.engine.before(self.instructions)
+		self.engine.before(self)
 		skip = 0
 		while self.pointer < len(self.instructions):
 			try:
 				self.pointer += self.engine.step(self.instructions[self.pointer]) + 1
 			except Engine.ExitFromEngine as e:
-				self.engine.close()
+				self.engine.close(self)
 				return e.args[0]
-		self.engine.close()
+		self.engine.close(self)
 		if self.engine.exited == False:
 			raise InvalidSyntax(self.instructions[-1].info, "Program was not exited properly")
 		return 0
@@ -585,9 +679,15 @@ def compile(*, source: str | Path,
 
 	if e:=callcmd(["make", "-C", "src/cfunc/"], verbose=verbose, devnull=True):
 		raise MakeException(e)
-	if e:=callcmd(["nasm", "-f", "elf64", "objs/intermediary.asm", "-o", "objs/intermediary.o"], verbose=verbose, devnull=True):
+	if e:=callcmd(["nasm", "-g", "-f", "elf64", "objs/intermediary.asm", "-o", "objs/intermediary.o"], verbose=verbose, devnull=True):
 		raise NASMException(e)
-	if e:=callcmd(["ld", "src/cfunc/objs/dump.o", "objs/intermediary.o", "-lc", "-I", "/lib64/ld-linux-x86-64.so.2", "-o", output ], verbose=verbose, devnull=True):
+	if e:=callcmd(["ld",
+				"src/cfunc/objs/dump.o",
+				"src/cfunc/objs/memory.o",
+				"objs/intermediary.o",
+				"-lc",
+				"-I", "/lib64/ld-linux-x86-64.so.2",
+				"-o", output ], verbose=verbose, devnull=True):
 		raise LinkerException(e)
 
 	if execution:

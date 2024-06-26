@@ -11,6 +11,7 @@ from .lexer import (
 
 from .errors import (
 	LangExceptions,
+	UnknownToken,
 	Reporting,
 	NotEnoughTokens,
 	InvalidType,
@@ -112,6 +113,7 @@ class _TypeChecker:
 		self.stack: list[tuple[Token, Type]] = []
 		self.block_stack: list[list[tuple[Token, Type]]] = []
 		self.block_origin_stack: list[list[tuple[Token, Type]]] = []
+		self.locals: list[dict[str, tuple[Token, Type]]] = []
 		self.last_case = -1
 
 	def __iter__(self):
@@ -119,7 +121,7 @@ class _TypeChecker:
 		next(c)
 		return c
 
-	def length_check(self, n: int, token: Token):
+	def check_length(self, n: int, token: Token):
 		if len(self.stack) < n:
 			raise NotEnoughTokens(token.info, f"Not enough arguments for {getOperationName(token)}")
 
@@ -138,21 +140,20 @@ class _TypeChecker:
 		return a_token, a_type
 
 	def check_same(self, length: int, token: Token) -> Type:
-		self.length_check(length, token)
+		self.check_length(length, token)
 		a_token, expected = self.stack.pop()
 		for i in range(1, length):
 			b_token, b_type = self.stack.pop()
 			if b_type != expected:
-				raise Reporting(b_token.info, f"{getTypeName(b_type)} must be equal", Reporting(a_token.info, f"{getTypeName(expected)} and", InvalidType(token.info, f"invalid type for {getOperationName(token)}")))
+				raise Reporting(b_token.info, f"{getTypeName(b_type)} must be equal to {getTypeName(expected)}", Reporting(a_token.info, f"{getTypeName(expected)} and", InvalidType(token.info, f"invalid type for {getOperationName(token)}")))
 		return expected
 		
 
 	def check(self, args: list[Type], token: Token) -> list[tuple[Token, Type]]:
-		self.length_check(len(args), token)
+		self.check_length(len(args), token)
 		stack_types = []
 		for i in args:
 			stack_types.append(self.type_check(i, token))
-			
 		return stack_types
 
 	def check_comb(self, args: list[list[Type]], token) -> tuple[int, list[Type]]:
@@ -162,7 +163,7 @@ class _TypeChecker:
 		length = lengths[0]
 
 		valid = [True for _ in args]
-		self.length_check(length, token)
+		self.check_length(length, token)
 		stack_types = []
 		for index, types in enumerate(zip(*args)):
 			stack_token, stack_type = self.stack.pop()
@@ -232,13 +233,13 @@ class _TypeChecker:
 					self.check([ANY], token)
 
 				case Token(type=Intrinsics.OP_DUP, value=val):
-					self.length_check(1, token)
+					self.check_length(1, token)
 					a = self.stack.pop()
 					self.stack.append(a)
 					self.stack.append((token, a[1]))
 
 				case Token(type=Intrinsics.OP_DUP2, value=val):
-					self.length_check(2, token)
+					self.check_length(2, token)
 					a = self.stack.pop()
 					b = self.stack.pop()
 					self.stack.append(b)
@@ -247,18 +248,31 @@ class _TypeChecker:
 					self.stack.append((token, a[1]))
 
 				case Token(type=Intrinsics.OP_SWAP, value=val):
-					self.length_check(2, token)
+					self.check_length(2, token)
 					a = self.stack.pop()
 					b = self.stack.pop()
 					self.stack.append(a)
 					self.stack.append(b)
 
+				case Token(type=Intrinsics.OP_SWAP, value=val):
+					self.check_length(4, token)
+					a = self.stack.pop()
+					b = self.stack.pop()
+					c = self.stack.pop()
+					d = self.stack.pop()
+					self.stack.append(c)
+					self.stack.append(d)
+					self.stack.append(a)
+					self.stack.append(b)
+
+				# d c b a 
+				# b a d c 
 				case Token(type=Intrinsics.OP_OVER, value=val):
-					self.length_check(2, token)
+					self.check_length(2, token)
 					self.stack.append(self.stack[-2])
 
 				case Token(type=Intrinsics.OP_ROT, value=val):
-					self.length_check(3, token)
+					self.check_length(3, token)
 					a = self.stack.pop(-1)
 					b = self.stack.pop(-1)
 					c = self.stack.pop(-1)
@@ -267,7 +281,7 @@ class _TypeChecker:
 					self.stack.append(c)
 
 				case Token(type=Intrinsics.OP_RROT, value=val):
-					self.length_check(3, token)
+					self.check_length(3, token)
 					a = self.stack.pop(-1)
 					b = self.stack.pop(-1)
 					c = self.stack.pop(-1)
@@ -357,6 +371,7 @@ class _TypeChecker:
 					case, _ = self.check_comb([
 						[INT,INT],
 						[CHAR,CHAR],
+						[BOOL,BOOL],
 					], token)
 					assert case != -1 and case < 3, "???"
 					if case == 0: self.stack.append((token, INT))
@@ -489,28 +504,26 @@ class _TypeChecker:
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_ELIF, value=val):
-
 					prev = self.block_stack.pop()
 					flowinfo: FlowInfo = val
 
 					assert flowinfo.prev, 'should have been caught as a parse error'
 					if flowinfo.prev.type == FlowControl.OP_IF and not flowinfo.haselse:
-						self.cmp_stack(self.stack, prev, IfException(token.info, ''))
+						self.cmp_stack(self.stack, prev, IfException(val.prev.info, ''))
 					if flowinfo.prev.type == FlowControl.OP_ELIF:
-						self.cmp_stack(self.stack, prev, ElifException(token.info, ''))
+						self.cmp_stack(self.stack, prev, ElifException(val.prev.info, ''))
 
 					self.block_stack.append(self.stack.copy())
 					self.stack = self.block_origin_stack[-1].copy()
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_ELSE, value=val):
-
 					prev = self.block_stack.pop()
 
 					flowinfo: FlowInfo = val
 					assert flowinfo.prev, 'should have been caught as a parse error'
 					if flowinfo.prev.type == FlowControl.OP_ELIF:
-						self.cmp_stack(self.stack, prev, ElseException(token.info, ''))
+						self.cmp_stack(self.stack, prev, ElseException(val.prev.info, ''))
 
 					self.block_stack.append(self.stack.copy())
 					self.stack = self.block_origin_stack[-1].copy()
@@ -522,6 +535,8 @@ class _TypeChecker:
 					self.last_case = -1
 
 				case Token(type=FlowControl.OP_DO, value=val):
+					if val.root.type in [FlowControl.OP_WITH, FlowControl.OP_LET]:
+						continue
 					self.check([BOOL], token)
 					self.last_case = -1
 
@@ -532,16 +547,36 @@ class _TypeChecker:
 
 				case Token(type=FlowControl.OP_END, value=val):
 					self.last_case = -1
+					if val.root.type in [PreprocTypes.PROC]:
+						continue
+					if val.root.type in [FlowControl.OP_WITH, FlowControl.OP_LET]:
+						self.locals.pop()
+						continue
 					prev = self.block_stack.pop()
-					if val.root.type in [FlowControl.OP_WHILE,]:
+					origin = self.block_origin_stack.pop()
+					if val.root.type == FlowControl.OP_WHILE:
 						self.cmp_stack(self.stack, prev, WhileException(token.info, ''))
-					elif val.root.type in [FlowControl.OP_IF,]:
+						self.stack = prev
+					elif val.root.type == FlowControl.OP_IF:
 						self.cmp_stack(self.stack, prev, IfException(token.info, ''))
+					elif val.root.type == FlowControl.OP_END:
+						pass
 					else:
 						raise RuntimeError(NotImplemented, token)
 
-				case Token(type=Intrinsics.OP_MEM, value=val):
-					self.stack.append((token, PTR[INT]))
+				case Token(type=FlowControl.OP_LET, value=val):
+					self.check([INT] * len(val.data), token)
+					l = {}
+					for tok in val.data:
+						l[tok.value] = [tok, PTR[ANY]]
+					self.locals.append(l)
+
+				case Token(type=FlowControl.OP_WITH, value=val):
+					self.check_length(len(val.data), token)
+					l = {}
+					for name in val.data:
+						l[name.value] = self.stack.pop()
+					self.locals.append(l)
 
 				case Token(type=Intrinsics.OP_ARGC, value=val):
 					self.stack.append((token, INT))
@@ -574,12 +609,31 @@ class _TypeChecker:
 					t = self.check([PTR[ANY]], token)
 					self.stack.append((token, derefType(t[0][1])))
 
-				case Token(type=OpTypes.OP_WORD):
-					raise RuntimeError(NotImplemented, token)
+				case Token(type=OpTypes.OP_WORD, value=key):
+					for d in reversed(self.locals):
+						if d.get(key, None) is not None:
+							self.stack.append(d[key])
+							break
+					else:
+						raise UnknownToken(token.info, "Unknown word")
 
 				case Token(type=PreprocTypes.CAST, value=val):
 					a = self.stack.pop()
 					self.stack.append((a[0], val))
+
+				case Token(type=PreprocTypes.MEMORY, value=val):
+					self.stack.append((token, PTR[ANY]))
+
+				case Token(type=PreprocTypes.PROC, value=val):
+					pass
+
+				case Token(type=PreprocTypes.CALL, value=val):
+					pass
+
+				case Token(type=FlowControl.OP_RET, value=val):
+					pass
+
+#					self.stack.append((token, PTR[ANY]))
 
 				case _:
 					raise RuntimeError(NotImplemented, token)

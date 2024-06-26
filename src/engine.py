@@ -31,28 +31,32 @@ from .typechecker import (
 from .errors import (
 	TypeWarning,
 	Stopped,
+	Reporting,
+	InvalidSyntax,
 )
 
 from .error_trace import (
 	warn, trace,
 )
 
-STR_CAPACITY  = 640_000
-MEM_CAPACITY  = 640_000
-ARGV_CAPACITY = 640_000
+STR_CAPACITY    = 640_000
+MEM_CAPACITY    = 64_000
+ARGV_CAPACITY   = 64_000
+LOCALS_CAPACITY = 512    # meaning it can store up to 512 vars, should be enough but honestly no idea
 
 
 class Engine(ABC):
 	class ExitFromEngine(Exception): pass
 
 	exited: bool = False
+	locals: list[dict[str, Any]] = []
 
 	@abstractmethod
 	def __init__(self, buffer: TextIO):
 		...
 
 	@abstractmethod
-	def before(self, instructions: list[Token]) -> None:
+	def before(self, program) -> None:
 		...
 
 	@abstractmethod
@@ -60,7 +64,7 @@ class Engine(ABC):
 		...
 
 	@abstractmethod
-	def close(self):
+	def close(self, program):
 		...
 
 class Instruction(ABC):
@@ -152,41 +156,59 @@ class Label(Instruction):
 		return self.nl
 
 	def align(self, largest: int) -> str:
-		return f"{self.name}:"
+		return f"{f'{self.name}:': <{largest}}"
 
 	@cached_property
 	def size(self) -> int:
-		return -1
-
-
+		return len(self.name) + 1
 
 class Compiler(Engine):
 	def __init__(self, buffer: TextIO):
 		self.buffer: TextIO = buffer
-		self._code = []
+		self._code: list[list[Instruction]] = []
 		self.strs = []
 		self.labels = 0
+
+		self.locals: list[dict[str, tuple[int, FlowControl]]] = []
+		self.globals: dict[str, tuple[int, Token]] = {}
+		self.procs: dict[str, Token] = {}
+		self.num_locals: int = 0
 
 		self.checktype, self.checker = TypeChecker()
 		self._state = 0
 
 		self.block("SLANG COMPILED PROGRAM", None)
+
 		self.asm1('extern', '__dump')
 		self.asm1('extern', '__udump')
 		self.asm1('extern', '__hexdump')
 		self.asm1('extern', '__cdump')
+		self.asm1('extern', '__malloc')
+		self.asm1('extern', '__free')
 		self.asm1('segment', '.text')
 		self.asm1('global', '_start')
 		self.label('\n_start')
 		self.asm2("mov", "qword [ARGS_PTR]", "rsp")
+		self.asm2("mov", "rax", "ret_stack_end")
+		self.asm2("mov", "qword [ret_stack_rsp]", "rax")
 
-	def before(self, instructions: list[Token]) -> None:
-		pass
+
+	def before(self, program) -> None:
+		for name, token in program.globals.items():
+			interp = Interpreter(sys.stdout.buffer)
+			for op in token.value[1:]:
+				if op.type not in [OpTypes.OP_PUSH, Operands.OP_PLUS, Operands.OP_MINUS, Operands.OP_MUL, Operands.OP_DIV, FlowControl.OP_LABEL]:
+					raise InvalidSyntax(op.info, "Only trivial intrinsics and substitutions are allowed inside memory block", Reporting(token.info, ''))
+				interp.step(op)
+			size = interp.pop()
+			if not interp.queue.empty():
+				raise InvalidSyntax(token.info, "Memory accepts only 1 argument")
+			self.globals[name] = (size, token)
 
 	def block(self, comment: str, token: Token | None) -> None:
 		self._code.append([Block(comment)])
 		if token and 1:
-			self.label(f"{token.type.name}_{len(self._code)}_{len(self._code[-1])}", nl=True)
+			self.label(f"block_{token.type.name}_{len(self._code)}", nl=True)
 
 	def label(self, name: str, nl=True, force_unique=False) -> None:
 		if force_unique:
@@ -318,10 +340,10 @@ class Compiler(Engine):
 				self.block("plus", instruction)
 				self.asm1("pop", "rax") # INT
 				self.asm1("pop", "rbx") # INT
-				if self.checker.last_case == 1:
-					self.asm2("shl", "rax", '3')
-				elif self.checker.last_case == 2:
-					self.asm2("shl", "rbx", '3')
+#				if self.checker.last_case == 1:
+#					self.asm2("shl", "rax", '3')
+#				elif self.checker.last_case == 2:
+#					self.asm2("shl", "rbx", '3')
 				self.asm2("add", "rax", "rbx")
 				self.asm1("push", "rax")
 
@@ -329,11 +351,11 @@ class Compiler(Engine):
 				self.block("minus", instruction)
 				self.asm1("pop", "rax")
 				self.asm1("pop", "rbx")
-				if self.checker.last_case == 1:
-					self.asm2("shl", "rax", "3")
+#				if self.checker.last_case == 1:
+#					self.asm2("shl", "rax", "3")
 				self.asm2("sub", "rbx", "rax")
-				if self.checker.last_case == 2:
-					self.asm2("shr", "rbx", "3")
+#				if self.checker.last_case == 2:
+#					self.asm2("shr", "rbx", "3")
 				self.asm1("push", "rbx")
 
 			case Token(type=Operands.OP_MUL, value=val):
@@ -371,19 +393,21 @@ class Compiler(Engine):
 			case Token(type=Operands.OP_INCREMENT, value=val):
 				self.block("increment", instruction)
 				self.asm1("pop", "rax")
-				if self.checker.last_case == 1:
-					self.asm2("add", "rax", "8")
-				else:
-					self.asm1("inc", "rax")
+#				if self.checker.last_case == 1:
+#					self.asm2("add", "rax", "8")
+#				else:
+#					self.asm1("inc", "rax")
+				self.asm1("inc", "rax")
 				self.asm1("push", "rax")
 
 			case Token(type=Operands.OP_DECREMENT, value=val):
 				self.block("decrement", instruction)
 				self.asm1("pop", "rax")
-				if self.checker.last_case == 1:
-					self.asm2("sub", "rax", "8")
-				else:
-					self.asm1("dec", "rax")
+#				if self.checker.last_case == 1:
+#					self.asm2("sub", "rax", "8")
+#				else:
+#					self.asm1("dec", "rax")
+				self.asm1("dec", "rax")
 				self.asm1("push", "rax")
 
 			case Token(type=Operands.OP_BLSH, value=val):
@@ -619,6 +643,10 @@ class Compiler(Engine):
 
 			case Token(type=OpTypes.OP_EXIT, value=val):
 				self.block("EXIT", instruction)
+				for l in self.locals[::-1]:
+					for offset, typ in l.values():
+						self.asm2("mov", "rdi", f"[locals+{offset*8}]")
+						self.asm1("call", "__free")
 				self.asm1("pop", "rdi")
 				self.asm2("mov", "rax", "60")
 				self.asm("syscall")
@@ -656,15 +684,54 @@ class Compiler(Engine):
 				else:
 					self.asm1("jz", f"{val.end.label()}")
 
-			case Token(type=FlowControl.OP_END, value=val):
-				self.block("END", instruction)
-				if val.root.type in [FlowControl.OP_WHILE,]:
-					self.asm1("jmp", f"{val.root.label()}")
-				self.label(instruction.label())
+			case Token(type=FlowControl.OP_RET, value=val):
+				self.block("RET", instruction)
+				self.asm2("mov", "rax", "rsp")
+				self.asm2("mov", "rsp", "[ret_stack_rsp]")
+				self.asm("ret")
 
-			case Token(type=Intrinsics.OP_MEM, value=val):
-				self.block("mem", instruction)
-				self.asm1("push", "mem")
+			case Token(type=FlowControl.OP_END, value=val):
+				if val.root.type in [PreprocTypes.PROC,]:
+					self.block("RET", instruction)
+					self.asm2("mov", "rax", "rsp")
+					self.asm2("mov", "rsp", "[ret_stack_rsp]")
+					self.asm("ret")
+					self.label(instruction.label())
+				else:
+					self.block("END", instruction)
+					if val.root.type in [FlowControl.OP_WHILE,]:
+						self.asm1("jmp", f"{val.root.label()}")
+					if val.root.type in [FlowControl.OP_WITH, FlowControl.OP_LET]:
+						for offset, typ in self.locals.pop().values():
+							self.asm2("mov", "rdi", f"[locals+{offset*8}]")
+							self.asm1("call", "__free")
+							self.num_locals -= 1
+					self.label(instruction.label())
+
+			case Token(type=FlowControl.OP_LET, value=val):
+				self.block(f"let {' '.join(i.value for i in val.data)}", instruction)
+				l = {}
+				for var in val.data:
+					self.asm1("pop", "rdi")
+					self.asm1("call", "__malloc")
+					self.asm2("mov", f"qword [locals+{self.num_locals * 8}]", "rax")
+					self.asm2("mov", "qword [rax]", "0")
+					l[var.value] = (self.num_locals, FlowControl.OP_LET)
+					self.num_locals += 1
+				self.locals.append(l)
+
+			case Token(type=FlowControl.OP_WITH, value=val):
+				self.block(f"let {' '.join(i.value for i in val.data)}", instruction)
+				l = {}
+				for var in val.data:
+					self.asm2("mov", "rdi", "8") # f"{var.size}"?
+					self.asm1("call", "__malloc")
+					self.asm2("mov", f"qword [locals+{self.num_locals * 8}]", "rax")
+					self.asm1("pop", "rbx")
+					self.asm2("mov", "qword [rax]", "rbx")
+					l[var.value] = (self.num_locals, FlowControl.OP_WITH)
+					self.num_locals += 1
+				self.locals.append(l)
 
 			case Token(type=Intrinsics.OP_ARGC, value=val):
 				self.block("argc", instruction)
@@ -730,8 +797,44 @@ class Compiler(Engine):
 				self.asm2("mov", "rbx", "[rax]")
 				self.asm1("push", "rbx")
 
-			case Token(type=OpTypes.OP_WORD):
-				raise RuntimeError(NotImplemented, instruction)
+			case Token(type=PreprocTypes.MEMORY, value=val):
+				name = val[0].value
+				if name in self.globals:
+					size, token = self.globals[name]
+					self.asm1("push", f"{token.label()}")
+				else:
+					raise ValueError("Should have been caught by parser")
+
+			case Token(type=OpTypes.OP_WORD, value=val):
+				self.block(f"var {val}", instruction)
+				for d in reversed(self.locals):
+					if d.get(val, None) is not None:
+						offset, typ = d[val]
+						self.asm2("mov", "rax", f"[locals+{offset * 8}]")
+						if typ == FlowControl.OP_WITH:
+							self.asm2("mov", "rbx", "qword [rax]")
+							self.asm1("push", "rbx")
+						if typ == FlowControl.OP_LET:
+							self.asm1("push", "rax")
+						break
+				else:
+					raise ValueError("Should have been caught by the type checker")
+
+			case Token(type=PreprocTypes.CALL, value=val):
+				self.block(f"CALL {val}", instruction)
+				self.asm2("mov", "rax", "rsp")
+				self.asm2("mov", "rsp", "[ret_stack_rsp]")
+				self.asm1("call", f"{self.procs[val].label()}")
+				self.asm2("mov", "[ret_stack_rsp]", "rsp")
+				self.asm2("mov", "rsp", "rax")
+
+			case Token(type=PreprocTypes.PROC, value=val):
+				self.procs[val.data[0].value] = instruction
+				self.asm1("jmp", f"{val.end.label()}")
+				self.label(instruction.label())
+				self.asm2("mov", "[ret_stack_rsp]", "rsp")
+				self.asm2("mov", "rsp", "rax")
+				return 1
 
 			case Token(type=PreprocTypes.CAST):
 				pass
@@ -741,7 +844,7 @@ class Compiler(Engine):
 
 		return 0
 
-	def close(self):
+	def close(self, program):
 		try:
 			self.checktype.send(None)
 		except TypeWarning as e:
@@ -753,6 +856,7 @@ class Compiler(Engine):
 		if self._state & 0b10:
 			raise Stopped()
 
+
 		self.block("DATA", None)
 		self.asm1("segment", ".data")
 		for index, s in enumerate(self.strs):
@@ -760,11 +864,20 @@ class Compiler(Engine):
 			self.asm1("db", ','.join(map(hex, s.encode('utf8'))))
 		
 		self.block("MEMORY", None)
+
 		self.asm1("segment", ".bss")
-		self.label(f"ARGS_PTR", nl=False)
-		self.asm1("resq", "1")
-		self.label("mem", nl=False)
-		self.asm1("resb", f"{MEM_CAPACITY}")
+		self.label(f"ARGS_PTR", nl=False); self.asm1("resq", "1")
+		
+		self.label(f"ret_stack_rsp", nl=False); self.asm1("resq", "1")
+		self.label(f"ret_stack", nl=False); self.asm1("resq", "1024") # max_recursion_limit
+		self.label(f"ret_stack_end")
+
+		for name, (size, token) in self.globals.items():
+			self.label(token.label(), nl=False)
+			self.asm1("resb", f"{size}")
+
+		self.label("locals", nl=False)
+		self.asm1("resq", f"{LOCALS_CAPACITY}")
 
 		align = max([j.size for i in self._code for j in i])
 		for i in self._code:
@@ -821,10 +934,10 @@ class Interpreter(Engine):
 	def pop(self) -> Any:
 		return self.queue.get_nowait()
 
-	def before(self, instructions: list[Token]) -> None:
+	def before(self, program) -> None:
 		checktype, _ = TypeChecker()
 		state = 0
-		for i in chain(instructions, [None]):
+		for i in chain(program.instructions, [None]):
 			try:
 				checktype.send(i)
 			except TypeWarning as e:
@@ -905,22 +1018,24 @@ class Interpreter(Engine):
 			case Token(type=Operands.OP_PLUS, value=val):
 				a = self.pop()
 				b = self.pop()
-				if self.last_case == 1:
-					self.push(a * 8 + b)
-				elif self.last_case == 2:
-					self.push(a + b * 8)
-				else:
-					self.push(a + b)
+#				if self.last_case == 1:
+#					self.push(a * 8 + b)
+#				elif self.last_case == 2:
+#					self.push(a + b * 8)
+#				else:
+#					self.push(a + b)
+				self.push(a + b)
 
 			case Token(type=Operands.OP_MINUS, value=val):
 				a = self.pop()
 				b = self.pop()
-				if self.last_case == 1:
-					self.push(b - a * 8)
-				elif self.last_case == 2:
-					self.push((b - a) // 8)
-				else:
-					self.push(b - a)
+#				if self.last_case == 1:
+#					self.push(b - a * 8)
+#				elif self.last_case == 2:
+#					self.push((b - a) // 8)
+#				else:
+#					self.push(b - a)
+				self.push(b - a)
 
 			case Token(type=Operands.OP_MUL, value=val):
 				self.push(self.pop() * self.pop())
@@ -938,17 +1053,19 @@ class Interpreter(Engine):
 
 			case Token(type=Operands.OP_INCREMENT, value=val):
 				a = self.pop()
-				if self.last_case == 1:
-					self.push(a + 8)
-				else:
-					self.push(a + 1)
+#				if self.last_case == 1:
+#					self.push(a + 8)
+#				else:
+#					self.push(a + 1)
+				self.push(a + 1)
 
 			case Token(type=Operands.OP_DECREMENT, value=val):
 				a = self.pop()
-				if self.last_case == 1:
-					self.push(a - 8)
-				else:
-					self.push(a - 1)
+#				if self.last_case == 1:
+#					self.push(a - 8)
+#				else:
+#					self.push(a - 1)
+				self.push(a - 1)
 
 			case Token(type=Operands.OP_MOD, value=val):
 				b = self.pop()
@@ -1126,9 +1243,6 @@ class Interpreter(Engine):
 				if val.root.type in [FlowControl.OP_WHILE,]:
 					return val.root.position - p
 
-			case Token(type=Intrinsics.OP_MEM, value=val):
-				self.push(1 + STR_CAPACITY + ARGV_CAPACITY)
-
 			case Token(type=Intrinsics.OP_ARGC, value=val):
 				self.push(self.argc)
 
@@ -1187,5 +1301,5 @@ class Interpreter(Engine):
 				raise RuntimeError(NotImplemented, instruction)
 		return 0
 
-	def close(self):
+	def close(self, program):
 		pass

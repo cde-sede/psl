@@ -99,4 +99,5 @@ if __name__ == '__main__':
 		try:
 			compile(source=args.source, output=args.output, temp=args.temp, verbose=args.verbose, includes=args.include, execution=args.exec, argv=args.argv)
 		except (MakeException, NASMException, LinkerException) as e:
-			print(e.__qualname__, e.args[0])
+			print(e.__class__.__name__, e.args[0])
+			exit(e.args[0])

@@ -16,6 +16,9 @@ class TypesType(Enum):
 
 class PreprocTypes(TypesType):
 	MACRO		 = auto()
+	CALL		 = auto()
+	PROC		 = auto()
+	MEMORY		 = auto()
 	INCLUDE		 = auto()
 	CAST		 = auto()
 
@@ -27,6 +30,9 @@ class FlowControl(TypesType):
 	OP_DO		 = auto()
 	OP_END		 = auto()
 	OP_LABEL	 = auto()
+	OP_LET		 = auto()
+	OP_WITH		 = auto()
+	OP_RET		 = auto()
 
 class Operands(TypesType):
 	OP_PLUS		 = auto()
@@ -57,10 +63,10 @@ class Intrinsics(TypesType):
 	OP_DUP		 = auto()
 	OP_DUP2		 = auto()
 	OP_SWAP		 = auto()
+	OP_SWAP2	 = auto()
 	OP_OVER		 = auto()
 	OP_ROT		 = auto()
 	OP_RROT		 = auto()
-	OP_MEM		 = auto()
 	OP_ARGC		 = auto()
 	OP_ARGV		 = auto()
 
@@ -151,6 +157,10 @@ class FlowInfo:
 	end: Optional['Token'] = None
 
 	haselse: bool = False
+	data: Any = None
+
+	def __repr__(self):
+		return f"FlowInfo(root={self.root.type}, data={self.data})"
 
 class Token:
 	__slots__ = ("type", "value", "info", "id", "position")
@@ -178,11 +188,11 @@ class Token:
 		return Token(
 			value=self.value,
 			type=self.type,
-			info=self.info.copy(parent) if self.info else (parent if parent else None)
+			info=self.info.copy(parent) if self.info else (parent if parent else None),
 		)
 
 NUMBER_REG	 = re.compile(r"^(\s*)(-?\d+)(\s+|$)")
-STRING_REG	 = re.compile(r"^(\s*)\"(.*)\"(\s+|$)")
+STRING_REG	 = re.compile(r"^(\s*)\"(.*?)\"(\s+|$)")
 OP_REG		 = re.compile(r"^(\s*)((?:[^\w\s]|\d)+)(\s+|$)")
 CHAR_REG	 = re.compile(r"^(\s*)'(\\?.)'(\s+|$)")
 CAST_REG	 = re.compile(r"^(\s*):(\w+\**)(\s+|$)")
