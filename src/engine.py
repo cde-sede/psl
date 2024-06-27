@@ -13,6 +13,9 @@ from .lexer import (
 	TokenInfo,
 	TokenTypes,
 
+	Procedure,
+
+	TypesType,
 	OpTypes,
 	PreprocTypes,
 	Intrinsics,
@@ -169,9 +172,9 @@ class Compiler(Engine):
 		self.strs = []
 		self.labels = 0
 
-		self.locals: list[dict[str, tuple[int, FlowControl]]] = []
+		self.locals: list[dict[str, tuple[int, TypesType]]] = []
 		self.globals: dict[str, tuple[int, Token]] = {}
-		self.procs: dict[str, Token] = {}
+		self.procs: dict[str, Procedure] = {}
 		self.num_locals: int = 0
 
 		self.checktype, self.checker = TypeChecker()
@@ -262,14 +265,14 @@ class Compiler(Engine):
 			case Token(type=OpTypes.OP_PUSH, value=val):
 				self.block("push", instruction)
 				if val > 2147483647:
-					self.asm2("mov", "rax", f"{val:.0f}")
+					self.asm2("mov", "rax", f"0x{val:x}")
 					self.asm1("push", "rax")
 				else:
-					self.asm1("push", f"{val:.0f}")
+					self.asm1("push", f"0x{val:x}")
 
 			case Token(type=OpTypes.OP_CHAR, value=val):
 				self.block("push char", instruction)
-				self.asm1("push", f"{val:.0f}")
+				self.asm1("push", f"0x{val:x}")
 
 			case Token(type=OpTypes.OP_BOOL, value=val):
 				self.block("push bool", instruction)
@@ -683,27 +686,25 @@ class Compiler(Engine):
 					else:
 						self.asm1("jz", f"{val.end.label()}")
 
-			case Token(type=FlowControl.OP_RET, value=val):
-				arg_count = len(val.value.next.value.data) - 1
-				self.block("RET", instruction)
-				self.asm1("pop", "rbp")
-				self.asm2("mov", "rax", "rbp")
-				self.asm1("ret", f"{arg_count * 8}")
-
 			case Token(type=FlowControl.OP_END, value=val):
 				if val.root.type in [PreprocTypes.PROC,]:
-					arg_count = len(val.root.value.next.value.data) - 1
-					self.block("RET", instruction)
+					self.block("END", instruction)
+					proc = val.root.value
+					nout = len(proc.out)
+					nargs = len(proc.args)
+					self.asm2("add", "rsp", f"0x{nout * 8:x}")
 					self.asm1("pop", "rbp")
-					self.asm1("ret", f"{arg_count * 8}")
+#					self.asm2("mov", "rax", "rbp")
+					self.asm1("ret", f"0x{nargs * 8:x}")
 					self.label(instruction.label())
+					self.locals.pop()
 				else:
 					self.block("END", instruction)
 					if val.root.type in [FlowControl.OP_WHILE,]:
 						self.asm1("jmp", f"{val.root.label()}")
 					if val.root.type in [FlowControl.OP_WITH, FlowControl.OP_LET]:
 						for offset, typ in self.locals.pop().values():
-							self.asm2("mov", "rdi", f"[locals+{offset*8}]")
+							self.asm2("mov", "rdi", f"[locals+0x{offset * 8:x}]")
 							self.asm1("call", "__free")
 							self.num_locals -= 1
 					self.label(instruction.label())
@@ -726,7 +727,7 @@ class Compiler(Engine):
 				for var in val.data:
 					self.asm2("mov", "rdi", "8") # f"{var.size}"?
 					self.asm1("call", "__malloc")
-					self.asm2("mov", f"qword [locals+{self.num_locals * 8}]", "rax")
+					self.asm2("mov", f"qword [locals+0x{self.num_locals * 8:x}]", "rax")
 					self.asm1("pop", "rbx")
 					self.asm2("mov", "qword [rax]", "rbx")
 					l[var.value] = (self.num_locals, FlowControl.OP_WITH)
@@ -810,11 +811,15 @@ class Compiler(Engine):
 				for d in reversed(self.locals):
 					if d.get(val, None) is not None:
 						offset, typ = d[val]
-						self.asm2("mov", "rax", f"[locals+{offset * 8}]")
 						if typ == FlowControl.OP_WITH:
+							self.asm2("mov", "rax", f"[locals+0x{offset * 8:x}]")
 							self.asm2("mov", "rbx", "qword [rax]")
 							self.asm1("push", "rbx")
-						if typ == FlowControl.OP_LET:
+						elif typ == FlowControl.OP_LET:
+							self.asm2("mov", "rax", f"[locals+0x{offset * 8:x}]")
+							self.asm1("push", "rax")
+						elif typ == PreprocTypes.PROC:
+							self.asm2("mov", "rax", f"qword [rbp+0x{offset:x}]")
 							self.asm1("push", "rax")
 						break
 				else:
@@ -822,34 +827,28 @@ class Compiler(Engine):
 
 			case Token(type=PreprocTypes.CALL, value=val):
 				self.block(f"CALL {val}", instruction)
-				self.asm1("call", f"{self.procs[val].label()}")
+				proc = self.procs[val]
+				self.asm1("call", f"{proc.root.label()}")
+				nout = len(proc.out)
+				nargs = len(proc.args)
+				offset = (nargs + 3) * 8
+				for i in range(nout):
+					self.asm2("mov", "rbx", f"qword [rsp-0x{offset:x}]")
+					self.asm1("push", "rbx")
 
 			case Token(type=PreprocTypes.PROC, value=val):
-				name = val.next.value.data[0].value
-				self.procs[name] = instruction
+				self.procs[val.name] = val
 				self.asm1("jmp", f"{val.end.label()}")
 				self.label(instruction.label())
 				self.asm1("push", "rbp")
 				self.asm2("mov", "rbp", "rsp")
-				for i in range(len(val.next.value.data[1:])):
-					self.asm2("mov", "rax", f"qword [rbp+{0x10 + i * 8}]")
-					self.asm1("push", "rax")
-				# TODO Stop this ret stack nonsense and just make use of some push rbp mov rbp rsp
-				#	like:
-				#
-				#  call fn			 ; push ret ptr
-				#  fn:				 ;
-				#  push rbp			 ; push old base ptr
-				#  mov rbp,rsp		 ; set current stack ptr as new base ptr
-				#  mov rax, [rbp+0x0]  ; old rbp
-				#  mov rax, [rbp+0x10]  ; ret addr
-				#  mov rax, [rbp+0x18]  ; old stack top
-				#  mov rax, [rbp+0x20]  ; old stack peek
-
-
-
-
-				return 1
+				l = {}
+				for i, (tok, typ) in enumerate(val.args):
+					l[tok.value] = (0x10 + i * 8, PreprocTypes.PROC)
+				self.locals.append(l)
+#				for i in range(len(val.next.value.data[1:])):
+#					self.asm2("mov", "rax", f"qword [rbp+0x{0x10 + i * 8:x}]")
+#					self.asm1("push", "rax")
 
 			case Token(type=PreprocTypes.CAST):
 				pass

@@ -6,6 +6,7 @@ import sys
 import subprocess
 import shutil
 from dataclasses import dataclass
+from itertools import batched
 
 from .engine import Engine, Compiler, Interpreter 
 from .typechecker import (
@@ -13,7 +14,6 @@ from .typechecker import (
 	TypeCheckerException,
 	NotEnoughTokens,
 	InvalidType,
-	Type,
 	Types,
 )
 
@@ -23,6 +23,10 @@ from .lexer import (
 	FlowInfo,
 	TokenInfo,
 	TokenTypes,
+
+	Type,
+	Symbol,
+	Procedure,
 
 	OpTypes,
 	PreprocTypes,
@@ -130,78 +134,12 @@ def EXIT(info=None) -> Token: return Token(OpTypes.OP_EXIT, info=info)
 
 def MACRO(info=None)             -> Token: return Token(PreprocTypes.MACRO, info=info)
 def CALL(val: str, info=None)    -> Token: return Token(PreprocTypes.CALL, val, info=info)
-def RET(info=None)               -> Token: return Token(FlowControl.OP_RET, info=info)
 def PROC(info=None)              -> Token: return Token(PreprocTypes.PROC, info=info)
 def IN(info=None)                -> Token: return Token(PreprocTypes.IN, info=info)
+def OUT(info=None)               -> Token: return Token(PreprocTypes.OUT, info=info)
 def MEMORY(info=None)            -> Token: return Token(PreprocTypes.MEMORY, info=info)
 def INCLUDE(info=None)           -> Token: return Token(PreprocTypes.INCLUDE, info=info)
 def CAST(val: Type, info=None)   -> Token: return Token(PreprocTypes.CAST, val, info=info)
-
-
-def StrToType(s: str) -> Type | None:
-	t, l = {
-		'any':   (Types.ANY, 3),
-		'void':  (Types.ANY, 4),
-		'int':   (Types.INT, 3),
-		'ptr':   (Types.PTR, 3),
-		'bool':  (Types.BOOL, 4),
-		'char':  (Types.CHAR, 4),
-
-		'byte':  (Types.CHAR, 4),
-		'dword': (Types.INT, 4),
-	}.get(s.rstrip('*'), None)
-	if t is None: return None
-
-	while s[l:] and s[l:][0] == '*':
-		t = Types.PTR[t]
-		l += 1
-	return t
-
-def unescape_string(s):
-	return s.encode('latin-1', 'backslashreplace').decode('unicode-escape')
-
-#BUILTIN_WORDS = [
-#	"dump",
-#	"udump",
-#	"blsh",
-#	"brsh",
-#	"band",
-#	"bor",
-#	"bxor",
-#	"cdump",
-#	"hexdump",
-#	"syscall",
-#	"syscall1",
-#	"syscall2",
-#	"syscall3",
-#	"syscall4",
-#	"syscall5",
-#	"syscall6",
-#	"rsyscall1",
-#	"rsyscall2",
-#	"rsyscall3",
-#	"rsyscall4",
-#	"rsyscall5",
-#	"rsyscall6",
-#	"drop",
-#	"dup",
-#	"dup2",
-#	"swap",
-#	"over",
-#	"exit",
-#	"if",
-#	"else",
-#	"while",
-#	"do",
-#	"macro",
-#	"end",
-#	"mem",
-#	"argc",
-#	"argv",
-#	"store",
-#	"load",
-#]
-
 
 KEYWORDS = {
 	"true":      (lambda val, info: BOOL(True, info=info)),
@@ -245,12 +183,12 @@ KEYWORDS = {
 	"macro":     (lambda val, info: MACRO(info=info)),
 	"proc":      (lambda val, info: PROC(info=info)),
 	"in":        (lambda val, info: IN(info=info)),
+	"out":       (lambda val, info: OUT(info=info)),
 	"memory":    (lambda val, info: MEMORY(info=info)),
 	"include":   (lambda val, info: INCLUDE(info=info)),
 	"end":       (lambda val, info: END(info=info)),
 	"let":       (lambda val, info: LET(info=info)),
 	"with":      (lambda val, info: WITH(info=info)),
-	"ret":       (lambda val, info: RET(info=info)),
 	"argc":      (lambda val, info: ARGC(info=info)),
 	"argv":      (lambda val, info: ARGV(info=info)),
 	"store":     (lambda val, info: STORE(info=info)),
@@ -298,10 +236,52 @@ class MakeException(Exception): pass
 class NASMException(Exception): pass
 class LinkerException(Exception): pass
 
-@dataclass
-class Symbol:
-	type: Any
-	data: Any
+def StrToType(s: str) -> Type | None:
+	t, l = {
+		'any':   (Types.ANY, 3),
+		'void':  (Types.ANY, 4),
+		'int':   (Types.INT, 3),
+		'ptr':   (Types.PTR, 3),
+		'bool':  (Types.BOOL, 4),
+		'char':  (Types.CHAR, 4),
+
+		'byte':  (Types.CHAR, 4),
+		'dword': (Types.INT, 4),
+	}.get(s.rstrip('*'), None)
+	if t is None: return None
+
+	while s[l:] and s[l:][0] == '*':
+		t = Types.PTR[t]
+		l += 1
+	return t
+
+def unescape_string(s):
+	return s.encode('latin-1', 'backslashreplace').decode('unicode-escape')
+
+def procedureFactory(token: Token, name: Token, args: list[Token], out: list[Token], body: list[Token]) -> Procedure:
+	l = []
+	try:
+		for var, typ in batched(args, 2):
+			assert var.type == OpTypes.OP_WORD, var
+			assert typ.type == PreprocTypes.CAST, typ
+			l.append((var, typ.value))
+	except AssertionError as e:
+		raise InvalidSyntax(e.args[0].info, 'Invalid procedure argument syntax')
+	except:
+		raise InvalidSyntax(token.info, 'Invalid procedure argument syntax')
+	m = []
+	for tok in out:
+		if tok.type == PreprocTypes.CAST:
+			m.append((tok, tok.value))
+		else:
+			raise InvalidSyntax(tok.info, 'Invalid procedure return syntax')
+	return Procedure(token,
+				token.value.end,
+				name.value,
+				l,
+				m,
+				body)
+
 
 class Program:
 	class Comment(Exception): ...
@@ -453,9 +433,23 @@ class Program:
 
 	def parse_proc(self, root: Token, end: Token):
 		in_ = root.value.next
+		out_ = in_.value.next
 
-		args = self.instructions[root.position+1:in_.position]
-		body = self.instructions[in_.position+1:end.position]
+		s, e = root.position+1, root.position
+		args = []
+		out = []
+		# TODO actually choose whether the minimal syntax is
+		#	proc name in end
+		# 	or
+		# 	proc name end
+		if in_:
+			s, e = e+1, in_.position
+			args = self.instructions[s:e]
+		if out_:
+			s, e = e+1, out_.position
+			out = self.instructions[s:e]
+		s, e = e+1, end.position
+		body = self.instructions[s:e]
 		if len(args) < 1:
 			raise InvalidSyntax(root.info, "`proc` requires a name")
 		if args[0].type != OpTypes.OP_WORD:
@@ -467,9 +461,13 @@ class Program:
 		name = args[0].info.string
 		in_.value.data = args
 		root.value.data = body
-		if body[-1].type == FlowControl.OP_RET:
-			body[-1].value = root
-			
+
+		root.value = procedureFactory(root, args[0], args[1:], out, body)
+
+		for i in reversed(range(root.position+1, s)):
+			self.instructions.pop(i)
+			self._position -= 1
+
 		self.symbols[name] = Symbol(PreprocTypes.PROC, root)
 
 	def parse_memory(self, tokens: list[Token]):
@@ -533,17 +531,16 @@ class Program:
 							self.instructions.pop(i)
 							self._position -= 1
 						self._in_preproc = 0
-					elif top.type is PreprocTypes.PROC:
+					elif top.type in [PreprocTypes.PROC, PreprocTypes.IN, PreprocTypes.OUT]:
+						top = top.value.root
+						flow = top.value
 						flow.end = token
-						if flow.next is None or flow.next.type is not PreprocTypes.IN:
-							raise InvalidSyntax(flow.root.info, '`proc` requires an `in` before `end`')
-							
+
 						assert flow.next
 						self.parse_proc(top, token)
-						for i in reversed(range(top.position+1, flow.next.position)):
-							self.instructions.pop(i)
-							self._position -= 1
+						proc = top.value
 						self._in_preproc = 0
+
 					elif top.type is PreprocTypes.MEMORY:
 						self.parse_memory(self.instructions[flow.root.position:token.position])
 						for i in reversed(range(top.position, token.position+1)):
@@ -612,10 +609,21 @@ class Program:
 					if top.type not in [PreprocTypes.PROC]:
 						raise InvalidSyntax(token.info, "`in` must be preceded by `proc`")
 					self._in_preproc = 0
-					token.value = FlowInfo(token, top)
+					token.value = FlowInfo(flow.root, top)
 					flow.next = token
-					stack.append((top, flow))
-					
+					stack.append((token, token.value))
+
+				case Token(type=PreprocTypes.OUT, value=val):
+					try:
+						top, flow = stack.pop()
+					except:
+						raise InvalidSyntax(token.info, "`out` must be preceded by `proc` or `in`")
+					if top.type not in [PreprocTypes.PROC, PreprocTypes.IN]:
+						raise InvalidSyntax(token.info, "`out` must be preceded by `proc` or `in`")
+					self._in_preproc = 0
+					token.value = FlowInfo(flow.root, top)
+					flow.next = token
+					stack.append((token, token.value))
 
 				case Token(type=PreprocTypes.PROC, value=val):
 					if val is not None:

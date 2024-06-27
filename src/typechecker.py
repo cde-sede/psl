@@ -1,5 +1,7 @@
 from .lexer import (
 	Token,
+	Type,
+	Procedure,
 	FlowInfo,
 	FlowControl,
 	TypesType,
@@ -12,6 +14,7 @@ from .lexer import (
 from .errors import (
 	LangExceptions,
 	UnknownToken,
+	InvalidSyntax,
 	Reporting,
 	NotEnoughTokens,
 	InvalidType,
@@ -32,39 +35,6 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import ClassVar
 from copy import deepcopy
-
-
-@dataclass
-class Type:
-	name: str
-	_size: int
-	parent: 'Type | None' = None
-
-	@property
-	def size(self):
-		return self.parent.size if self.parent else self._size
-	def __getitem__(self, key: 'Type'):
-		new = deepcopy(key)
-		def f(n):
-			if n.parent is not None: f(n.parent)
-			else: n.parent = self
-		f(new)
-		return new
-
-	def __eq__(self, other):
-		assert isinstance(other, Type) or other is None
-		return ((self.name == other.name
-				if other.name != 'ANY' and self.name != 'ANY'
-				else True) and (self.parent == other.parent)) if other is not None else False
-	def __repr__(self):
-		w = f"{self.name}"
-		n = self
-		while (n := n.parent):
-			w = f"{n.name}[{w}]"
-		return w
-	def __hash__(self):
-		return hash(repr(self))
-
 
 ANY		= Type('ANY', 8)
 CHAR	= Type('CHAR', 1)
@@ -115,7 +85,7 @@ class _TypeChecker:
 		self.block_stack: list[list[tuple[Token, Type]]] = []
 		self.block_origin_stack: list[list[tuple[Token, Type]]] = []
 		self.locals: list[dict[str, tuple[Token, Type]]] = []
-		self.procedures: dict[str, list[tuple[Token, Type]]] = {}
+		self.procedures: dict[str, Procedure] = {}
 		self.last_case = -1
 
 	def __iter__(self):
@@ -133,8 +103,11 @@ class _TypeChecker:
 			raise Reporting(a_token.info, f"{getTypeName(a_type)} has a byte side of {a_type.size}, expected {expected}", InvalidType(token.info, f"invalid size for {getOperationName(token)}"))
 		return a_token, a_type
 
-	def type_check(self, expected: Type, token: Token) -> tuple[Token, Type]:
-		a_token, a_type = self.stack.pop()
+	def type_check(self, expected: Type, token: Token, *, consume=True) -> tuple[Token, Type]:
+		if consume:
+			a_token, a_type = self.stack.pop()
+		else:
+			a_token, a_type = self.stack[-1]
 		if expected == ANY:
 			return a_token, a_type
 		if a_type != expected:
@@ -151,11 +124,11 @@ class _TypeChecker:
 		return expected
 		
 
-	def check(self, args: list[Type], token: Token) -> list[tuple[Token, Type]]:
+	def check(self, args: list[Type], token: Token, *, consume=True) -> list[tuple[Token, Type]]:
 		self.check_length(len(args), token)
 		stack_types = []
 		for i in args:
-			stack_types.append(self.type_check(i, token))
+			stack_types.append(self.type_check(i, token, consume=consume))
 		return stack_types
 
 	def check_comb(self, args: list[list[Type]], token) -> tuple[int, list[Type]]:
@@ -555,6 +528,8 @@ class _TypeChecker:
 					prev = self.block_stack.pop()
 					origin = self.block_origin_stack.pop()
 					if val.root.type in [PreprocTypes.PROC]:
+						procedure = val.root.value
+						self.check([i[1] for i in procedure.out], token)
 						if self.stack:
 							if len(self.stack) == 1:
 								a_token, a_type = self.stack.pop()
@@ -634,25 +609,21 @@ class _TypeChecker:
 					self.stack.append((token, PTR[ANY]))
 
 				case Token(type=PreprocTypes.PROC, value=val):
-					in_ = val.next
-					name = in_.value.data[0].value
-					args = in_.value.data[1:]
-					for tok in args:
-						if tok.type != PreprocTypes.CAST:
-							raise InvalidType(tok.info, 'Procedure arguments definition can only be casts')
-					self.procedures[name] = [(tok, tok.value) for tok in args]
+					self.procedures[val.name] = val
 					self.block_origin_stack.append(self.stack.copy())
 					self.block_stack.append([])
-					self.stack = self.procedures[name].copy()
+					self.stack = []
+					l = {}
+					for tok, typ in val.args:
+						l[tok.value] = [tok, typ]
+					self.locals.append(l)
 					self.last_case = -1
 
+
 				case Token(type=PreprocTypes.CALL, value=val):
-					self.check([i[1] for i in self.procedures[val]], token)
-
-				case Token(type=FlowControl.OP_RET, value=val):
-					pass
-
-#					self.stack.append((token, PTR[ANY]))
+					self.check([i[1] for i in self.procedures[val].args], token)
+					for i in self.procedures[val].out:
+						self.stack.append(i)
 
 				case _:
 					raise RuntimeError(NotImplemented, token)

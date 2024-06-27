@@ -5,6 +5,7 @@ from io import StringIO
 import collections
 import re
 from dataclasses import dataclass
+from copy import deepcopy
 
 from .errors import (
 	InvalidSyntax,
@@ -19,6 +20,7 @@ class PreprocTypes(TypesType):
 	CALL		 = auto()
 	PROC		 = auto()
 	IN			 = auto()
+	OUT			 = auto()
 	MEMORY		 = auto()
 	INCLUDE		 = auto()
 	CAST		 = auto()
@@ -33,7 +35,6 @@ class FlowControl(TypesType):
 	OP_LABEL	 = auto()
 	OP_LET		 = auto()
 	OP_WITH		 = auto()
-	OP_RET		 = auto()
 
 class Operands(TypesType):
 	OP_PLUS		 = auto()
@@ -163,6 +164,7 @@ class FlowInfo:
 	def __repr__(self):
 		return f"FlowInfo(root={self.root.type}, data={self.data})"
 
+
 class Token:
 	__slots__ = ("type", "value", "info", "id", "position")
 
@@ -191,6 +193,58 @@ class Token:
 			type=self.type,
 			info=self.info.copy(parent) if self.info else (parent if parent else None),
 		)
+
+
+@dataclass
+class Type:
+	name: str
+	_size: int
+	parent: 'Type | None' = None
+
+	@property
+	def size(self):
+		return self.parent.size if self.parent else self._size
+
+	def __getitem__(self, key: 'Type'):
+		new = deepcopy(key)
+		def f(n):
+			if n.parent is not None: f(n.parent)
+			else: n.parent = self
+		f(new)
+		return new
+
+	def __eq__(self, other):
+		assert isinstance(other, Type) or other is None
+		return ((self.name == other.name
+				if other.name != 'ANY' and self.name != 'ANY'
+				else True) and (self.parent == other.parent)) if other is not None else False
+
+	def __repr__(self):
+		w = f"{self.name}"
+		n = self
+		while (n := n.parent):
+			w = f"{n.name}[{w}]"
+		return w
+
+	def __hash__(self):
+		return hash(repr(self))
+
+
+@dataclass
+class Symbol:
+	type: Any
+	data: Any
+
+
+@dataclass
+class Procedure:
+	root: Token
+	end: Token
+	name: str
+	args: list[tuple[Token, Type]]
+	out: list[tuple[Token, Type]]
+	body: list[Token]
+
 
 NUMBER_REG	 = re.compile(r"^(\s*)(-?\d+)(\s+|$)")
 STRING_REG	 = re.compile(r"^(\s*)\"(.*?)\"(\s+|$)")
