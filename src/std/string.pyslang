@@ -33,58 +33,68 @@ macro str.shrink()
 end
 
 // input: str
-macro str.lshrink()
-	dup str.count dec64
-	dup str.data  inc64
-	drop
+proc str.lshrink()
+	str :any*
+in
+	str str.count dec64
+	str str.data  inc64
 end
 
 // s1: str
 // s2: str
-macro str.eq()
-	with s2 s1 do
-		if s1 @str.count s2 @str.count == do
-			0 while 
-				if dup s1 @str.count < do
-					dup s1 str.at()
-					over s2 str.at()
-					==
-				else false end
-			do ++ end 
-			s1 @str.count ==
-		else false end
+proc str.eq()
+	s2 :any* s1 :any*
+in
+	:bool
+out
+	if s1 @str.count s2 @str.count == do
+		0 while 
+			if dup s1 @str.count < do
+				dup s1 str.at()
+				over s2 str.at()
+				==
+			else false end
+		do ++ end 
+		s1 @str.count
+		==
+	else
+		false
 	end
 end
 
 // char to trim: char
 // input: str
-macro str.ltrim()
+proc str.ltrim()
+	char :char
+	str :any*
+in
 	while 
-		dup2 0 swap str.at() ==
+		0 str str.at() char ==
 	do
-		dup str.lshrink()
+		str str.lshrink()
 	end
-	drop2
 end
 
 // char: char
 // output: str
 // content: str
-macro str.split()
-	with input output char do
-		input @str.data output !str.data // output->data = input->data
-		0 output str.count !str.count    // output->count = 0
-		while
-			if input @str.count 0 > do   // if len(input) > 0
-				0 input str.at() char != // true if input[0] != char else false
-			else false end               // false
-		do
-			input str.lshrink()          // del input[0]
-			output str.count inc64       // output.length += 1
-		end
-		if input @str.count 0 > do       // if len(input) > 0
-			input str.lshrink()          // del input[0]
-		end
+proc str.split()
+	char :char
+	output :any*
+	input :any*
+in
+	input @str.data output !str.data // output->data = input->data
+	0 output str.count !str.count    // output->count = 0
+	while
+		if input @str.count 0 > do   // if len(input) > 0
+			0 input str.at() char != // true if input[0] != char else false
+		else false end               // false
+	do
+		input str.lshrink()          // del input[0]
+		output str.count inc64       // output.length += 1
+	end
+	if input @str.count 0 > do       // if len(input) > 0
+		input str.lshrink()          // del input[0]
 	end
 end
 
@@ -94,17 +104,19 @@ macro read_line
 	'\n' rrot str.split()
 end
 
-macro str.isdigit()
-	with input do
-		0 while
-			if dup input @str.count < do
-				dup input str.at() dup
-				'0' >= swap '9' <=
-				band :bool
-			else false end
-		do
-			++
-		end
-		input @str.count ==
+proc str.isdigit()
+	input :any*
+in
+	:bool
+out
+	0 while
+		if dup input @str.count < do
+			dup input str.at() dup
+			'0' >= swap '9' <=
+			band :bool
+		else false end
+	do
+		++
 	end
+	input @str.count ==
 end

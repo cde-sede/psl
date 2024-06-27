@@ -387,7 +387,7 @@ end
 
 macro nth_argv 8 * argv + @64 end
 
-macro sizeof(stat) 144 end
+macro stat? 144 end
 
 macro stat.st_dev     :int   0 + :int* end // ID of device containing file
 macro stat.st_ino     :int   8 + :int* end // Inode number
