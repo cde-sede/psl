@@ -78,6 +78,8 @@ class OpTypes(TypesType):
 	OP_CHAR		 = auto()
 	OP_BOOL		 = auto()
 
+	OP_PUSHMEMORY= auto()
+
 	OP_WORD		 = auto()
 
 	OP_STORE	 = auto()
@@ -198,36 +200,42 @@ class Token:
 @dataclass
 class Type:
 	name: str
-	_size: int
+	size: int
 	parent: 'Type | None' = None
 
-	@property
-	def size(self):
-		return self.parent.size if self.parent else self._size
-
 	def __getitem__(self, key: 'Type'):
-		new = deepcopy(key)
-		def f(n):
-			if n.parent is not None: f(n.parent)
-			else: n.parent = self
-		f(new)
+		new = deepcopy(self)
+		new.parent = deepcopy(key)
 		return new
 
 	def __eq__(self, other):
-		assert isinstance(other, Type) or other is None
-		return ((self.name == other.name
-				if other.name != 'ANY' and self.name != 'ANY'
-				else True) and (self.parent == other.parent)) if other is not None else False
+		if other is None:
+			return self.name == 'any'
+		assert isinstance(other, Type)
+		if other.name == 'any':
+			return True
+		if other.name == self.name:
+			return self.parent == other.parent
+		return False
+
+	def __matmul__(self, other):
+		if other is None:
+			return self.name == 'any'
+		assert isinstance(other, Type)
+		if other.name == 'any' or self.name == 'any':
+			return True
+		if other.name == self.name:
+			if other.parent:
+				return other.parent @ self.parent
+			return True
+		return False
+
+	def __xor__(self, other):
+		assert isinstance(other, Type)
+		return self.size == other.size
 
 	def __repr__(self):
-		w = f"{self.name}"
-		n = self
-		while (n := n.parent):
-			w = f"{n.name}[{w}]"
-		return w
-
-	def __hash__(self):
-		return hash(repr(self))
+		return f"{self.name}{f'[{self.parent!r}]' if self.parent else ''}"
 
 
 @dataclass

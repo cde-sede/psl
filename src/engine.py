@@ -45,7 +45,6 @@ from .error_trace import (
 STR_CAPACITY    = 640_000
 MEM_CAPACITY    = 64_000
 ARGV_CAPACITY   = 64_000
-LOCALS_CAPACITY = 512    # meaning it can store up to 512 vars, should be enough but honestly no idea
 
 
 class Engine(ABC):
@@ -195,9 +194,10 @@ class Compiler(Engine):
 
 
 	def before(self, program) -> None:
-		for name, token in program.globals.items():
+		for name, symbol in program.globals.items():
 			interp = Interpreter(sys.stdout.buffer)
-			for op in token.value[1:]:
+			token  = symbol.data[0]
+			for op in symbol.data[2:]:
 				if op.type not in [OpTypes.OP_PUSH, Operands.OP_PLUS, Operands.OP_MINUS, Operands.OP_MUL, Operands.OP_DIV, FlowControl.OP_LABEL]:
 					raise InvalidSyntax(op.info, "Only trivial intrinsics and substitutions are allowed inside memory block", Reporting(token.info, ''))
 				interp.step(op)
@@ -706,7 +706,6 @@ class Compiler(Engine):
 						for offset, typ in self.locals.pop().values():
 							self.asm2("mov", "rdi", f"[locals+0x{offset * 8:x}]")
 							self.asm1("call", "__free")
-							self.num_locals -= 1
 					self.label(instruction.label())
 
 			case Token(type=FlowControl.OP_LET, value=val):
@@ -798,32 +797,44 @@ class Compiler(Engine):
 				self.asm2("mov", "rbx", "[rax]")
 				self.asm1("push", "rbx")
 
-			case Token(type=PreprocTypes.MEMORY, value=val):
-				name = val[0].value
-				if name in self.globals:
-					size, token = self.globals[name]
+			case Token(type=OpTypes.OP_PUSHMEMORY, value=val):
+				if val in self.globals:
+					size, token = self.globals[val]
 					self.asm1("push", f"{token.label()}")
 				else:
 					raise ValueError("Should have been caught by parser")
 
 			case Token(type=OpTypes.OP_WORD, value=val):
-				self.block(f"var {val}", instruction)
-				for d in reversed(self.locals):
-					if d.get(val, None) is not None:
-						offset, typ = d[val]
-						if typ == FlowControl.OP_WITH:
-							self.asm2("mov", "rax", f"[locals+0x{offset * 8:x}]")
-							self.asm2("mov", "rbx", "qword [rax]")
-							self.asm1("push", "rbx")
-						elif typ == FlowControl.OP_LET:
-							self.asm2("mov", "rax", f"[locals+0x{offset * 8:x}]")
-							self.asm1("push", "rax")
-						elif typ == PreprocTypes.PROC:
-							self.asm2("mov", "rax", f"qword [rbp+0x{offset:x}]")
-							self.asm1("push", "rax")
-						break
+				if val in self.procs:
+					self.block(f"CALL {val}", instruction)
+					proc = self.procs[val]
+					self.asm1("call", f"{proc.root.label()}")
+					nout = len(proc.out)
+					nargs = len(proc.args)
+					offset = (nargs + 3) * 8
+					for i in range(nout):
+						self.asm2("mov", "rbx", f"qword [rsp-0x{offset:x}]")
+						self.asm1("push", "rbx")
+					
 				else:
-					raise ValueError("Should have been caught by the type checker")
+					# TODO same as the OP_WORD todo in the type checker
+					self.block(f"var {val}", instruction)
+					for d in reversed(self.locals):
+						if d.get(val, None) is not None:
+							offset, typ = d[val]
+							if typ == FlowControl.OP_WITH:
+								self.asm2("mov", "rax", f"[locals+0x{offset * 8:x}]")
+								self.asm2("mov", "rbx", "qword [rax]")
+								self.asm1("push", "rbx")
+							elif typ == FlowControl.OP_LET:
+								self.asm2("mov", "rax", f"[locals+0x{offset * 8:x}]")
+								self.asm1("push", "rax")
+							elif typ == PreprocTypes.PROC:
+								self.asm2("mov", "rax", f"qword [rbp+0x{offset:x}]")
+								self.asm1("push", "rax")
+							break
+					else:
+						raise ValueError("Should have been caught by the type checker")
 
 			case Token(type=PreprocTypes.CALL, value=val):
 				self.block(f"CALL {val}", instruction)
@@ -887,7 +898,7 @@ class Compiler(Engine):
 			self.asm1("resb", f"{size}")
 
 		self.label("locals", nl=False)
-		self.asm1("resq", f"{LOCALS_CAPACITY}")
+		self.asm1("resq", f"{self.num_locals}")
 
 		align = max([j.size for i in self._code for j in i])
 		for i in self._code:

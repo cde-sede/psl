@@ -86,6 +86,7 @@ class _TypeChecker:
 		self.block_origin_stack: list[list[tuple[Token, Type]]] = []
 		self.locals: list[dict[str, tuple[Token, Type]]] = []
 		self.procedures: dict[str, Procedure] = {}
+		self.block_exit = False
 		self.last_case = -1
 
 	def __iter__(self):
@@ -599,13 +600,23 @@ class _TypeChecker:
 							self.stack.append(d[key])
 							break
 					else:
-						raise UnknownToken(token.info, "Unknown word")
+						# TODO remove this, it's a hacky fix to allow for recursion
+						# I just should redo the whole parser now that i have more
+						# knowledge, it was a crappy design meant to be quickly working
+						# to allow me to focus on the design of the language and not
+						# the actual compiler code
+						if key in self.procedures:
+							self.check([i[1] for i in self.procedures[key].args], token)
+							for i in self.procedures[key].out:
+								self.stack.append(i)
+						else:
+							raise UnknownToken(token.info, "Unknown word")
 
 				case Token(type=PreprocTypes.CAST, value=val):
 					a = self.stack.pop()
 					self.stack.append((a[0], val))
 
-				case Token(type=PreprocTypes.MEMORY, value=val):
+				case Token(type=OpTypes.OP_PUSHMEMORY, value=val):
 					self.stack.append((token, PTR[ANY]))
 
 				case Token(type=PreprocTypes.PROC, value=val):

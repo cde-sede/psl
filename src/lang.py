@@ -138,6 +138,7 @@ def PROC(info=None)              -> Token: return Token(PreprocTypes.PROC, info=
 def IN(info=None)                -> Token: return Token(PreprocTypes.IN, info=info)
 def OUT(info=None)               -> Token: return Token(PreprocTypes.OUT, info=info)
 def MEMORY(info=None)            -> Token: return Token(PreprocTypes.MEMORY, info=info)
+def PUSHMEMORY(val, info=None)   -> Token: return Token(OpTypes.OP_PUSHMEMORY, val, info=info)
 def INCLUDE(info=None)           -> Token: return Token(PreprocTypes.INCLUDE, info=info)
 def CAST(val: Type, info=None)   -> Token: return Token(PreprocTypes.CAST, val, info=info)
 
@@ -318,6 +319,7 @@ class Program:
 		if token.type == TokenTypes.WORD and token.string not in KEYWORDS:
 			if token.string in self.symbols:
 				if self.symbols[token.string].type == PreprocTypes.MEMORY:
+					return [PUSHMEMORY(token.string)]
 					return [self.symbols[token.string].data]
 				elif self.symbols[token.string].type == PreprocTypes.PROC:
 					return [CALL(token.string, info=token)]
@@ -452,8 +454,10 @@ class Program:
 		body = self.instructions[s:e]
 		if len(args) < 1:
 			raise InvalidSyntax(root.info, "`proc` requires a name")
+		if args[0].type == PreprocTypes.CALL:
+			raise SymbolRedefined(args[0].info, "Has already been defined")
 		if args[0].type != OpTypes.OP_WORD:
-			raise InvalidSyntax(args[0].info, f"`proc` name must be a word no `{args[0].type.name}`")
+			raise InvalidSyntax(args[0].info, f"`proc` name must be a word not `{args[0].type.name}`")
 		assert args[0].info
 		if args[0].info.string in self.symbols:
 			raise SymbolRedefined(args[0].info, "Has already been defined")
@@ -480,7 +484,7 @@ class Program:
 		if tokens[1].info.string in self.symbols:
 			raise SymbolRedefined(tokens[1].info, "Has already been defined")
 
-		self.symbols[tokens[1].info.string] = Symbol(PreprocTypes.MEMORY, tokens[1:])
+		self.symbols[tokens[1].info.string] = Symbol(PreprocTypes.MEMORY, tokens)
 		self.globals[tokens[1].info.string] = self.symbols[tokens[1].info.string]
 
 	def process_flow_control(self):
