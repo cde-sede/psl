@@ -1,8 +1,11 @@
-from .lexer import (
+from .classes import (
 	Token,
 	Type,
 	Procedure,
 	FlowInfo,
+)
+
+from .lexer import (
 	FlowControl,
 	TypesType,
 	OpTypes,
@@ -599,7 +602,12 @@ class _TypeChecker:
 							self.stack.append(d[key])
 							break
 					else:
-						raise UnknownToken(token.info, "Unknown word")
+						if key in self.procedures:
+							self.check([i[1] for i in self.procedures[key].args], token)
+							for i in self.procedures[key].out:
+								self.stack.append(i)
+						else:
+							raise UnknownToken(token.info, "Unknown word")
 
 				case Token(type=PreprocTypes.CAST, value=val):
 					a = self.stack.pop()

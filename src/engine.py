@@ -8,12 +8,13 @@ from itertools import chain, takewhile
 import ctypes
 import sys
 
+from .classes import (
+	Token, Procedure, Type, Instruction, Engine
+)
+
 from .lexer import (
-	Token,
 	TokenInfo,
 	TokenTypes,
-
-	Procedure,
 
 	TypesType,
 	OpTypes,
@@ -27,7 +28,6 @@ from .lexer import (
 from .typechecker import (
 	TypeChecker,
 	run_single,
-	Type,
 	Types,
 )
 
@@ -48,43 +48,6 @@ ARGV_CAPACITY   = 64_000
 LOCALS_CAPACITY = 512    # meaning it can store up to 512 vars, should be enough but honestly no idea
 
 
-class Engine(ABC):
-	class ExitFromEngine(Exception): pass
-
-	exited: bool = False
-	locals: list[dict[str, Any]] = []
-
-	@abstractmethod
-	def __init__(self, buffer: TextIO):
-		...
-
-	@abstractmethod
-	def before(self, program) -> None:
-		...
-
-	@abstractmethod
-	def step(self, instruction: Token) -> int:
-		...
-
-	@abstractmethod
-	def close(self, program):
-		...
-
-class Instruction(ABC):
-	@property
-	def newline(self) -> bool:
-		...
-
-	@abstractmethod
-	def align(self, largest) -> str:
-		...
-
-	@cached_property
-	def size(self) -> int:
-		...
-
-	def __mod__(self, x: int):
-		return f"{self.align(x)}{'\n' if self.newline else ''}"
 
 class Block(Instruction):
 	def __init__(self, string):
@@ -195,9 +158,10 @@ class Compiler(Engine):
 
 
 	def before(self, program) -> None:
-		for name, token in program.globals.items():
+		for name, symbol in program.globals.items():
 			interp = Interpreter(sys.stdout.buffer)
-			for op in token.value[1:]:
+			token: Token = symbol.data
+			for op in token.value.data[1:]:
 				if op.type not in [OpTypes.OP_PUSH, Operands.OP_PLUS, Operands.OP_MINUS, Operands.OP_MUL, Operands.OP_DIV, FlowControl.OP_LABEL]:
 					raise InvalidSyntax(op.info, "Only trivial intrinsics and substitutions are allowed inside memory block", Reporting(token.info, ''))
 				interp.step(op)
@@ -233,19 +197,24 @@ class Compiler(Engine):
 		"""
 
 		registers = ["rdi", "rsi", "rdx", "r10", "r8", "r9"]
-		if len(args) < 7:
-			for reg, arg in reversed([*zip(registers, args)]):
-				if arg is None:
-					self.asm1("pop", f"{reg}")
-				else:
-					self.asm2("mov", f"{reg}", f"{arg}")
+		for reg, arg in reversed([*zip(registers, args)]):
+			if arg is None:
+				self.asm1("pop", f"{reg}")
+			else:
+				self.asm2("mov", f"{reg}", f"{arg}")
+		# if len(args) > 6 assume all arguments were already pushed to the stack
+		# TODO remove this assumption to handle immediates
 
 		self.asm1("push", "rbp")
+		self.asm2("mov", "qword [rsp_align]", "rsp")
+		self.asm2("and", "rsp", "-0x10")
 		self.asm2("sub", "rsp", "8")
-		self.asm2("mov", "rbp", "rsp")
+
 		self.asm1("call", f"{name}")
-		self.asm2("add", "rsp", "8")
+
+		self.asm2("mov", "rsp", "qword [rsp_align]")
 		self.asm1("pop", "rbp")
+
 
 	def step(self, instruction: Token) -> int:
 		try:
@@ -341,10 +310,6 @@ class Compiler(Engine):
 				self.block("plus", instruction)
 				self.asm1("pop", "rax") # INT
 				self.asm1("pop", "rbx") # INT
-#				if self.checker.last_case == 1:
-#					self.asm2("shl", "rax", '3')
-#				elif self.checker.last_case == 2:
-#					self.asm2("shl", "rbx", '3')
 				self.asm2("add", "rax", "rbx")
 				self.asm1("push", "rax")
 
@@ -352,11 +317,7 @@ class Compiler(Engine):
 				self.block("minus", instruction)
 				self.asm1("pop", "rax")
 				self.asm1("pop", "rbx")
-#				if self.checker.last_case == 1:
-#					self.asm2("shl", "rax", "3")
 				self.asm2("sub", "rbx", "rax")
-#				if self.checker.last_case == 2:
-#					self.asm2("shr", "rbx", "3")
 				self.asm1("push", "rbx")
 
 			case Token(type=Operands.OP_MUL, value=val):
@@ -394,20 +355,12 @@ class Compiler(Engine):
 			case Token(type=Operands.OP_INCREMENT, value=val):
 				self.block("increment", instruction)
 				self.asm1("pop", "rax")
-#				if self.checker.last_case == 1:
-#					self.asm2("add", "rax", "8")
-#				else:
-#					self.asm1("inc", "rax")
 				self.asm1("inc", "rax")
 				self.asm1("push", "rax")
 
 			case Token(type=Operands.OP_DECREMENT, value=val):
 				self.block("decrement", instruction)
 				self.asm1("pop", "rax")
-#				if self.checker.last_case == 1:
-#					self.asm2("sub", "rax", "8")
-#				else:
-#					self.asm1("dec", "rax")
 				self.asm1("dec", "rax")
 				self.asm1("push", "rax")
 
@@ -437,13 +390,6 @@ class Compiler(Engine):
 				self.asm1("pop", "rsi")
 				self.asm1("pop", "rax")
 				self.asm2("or", "rax", "rsi")
-				self.asm1("push", "rax")
-
-			case Token(type=Operands.OP_BXOR, value=val):
-				self.block("bitwise xor", instruction)
-				self.asm1("pop", "rsi")
-				self.asm1("pop", "rax")
-				self.asm2("xor", "rax", "rsi")
 				self.asm1("push", "rax")
 
 			case Token(type=Operands.OP_EQ, value=val):
@@ -646,8 +592,9 @@ class Compiler(Engine):
 				self.block("EXIT", instruction)
 				for l in self.locals[::-1]:
 					for offset, typ in l.values():
-						self.asm2("mov", "rdi", f"[locals+{offset*8}]")
-						self.asm1("call", "__free")
+						self.call_cfunction("__free", [f"[locals+0x{offset*8:x}]"])
+#						self.asm2("mov", "rdi", f"[locals+{offset*8}]")
+#						self.asm1("call", "__free")
 				self.asm1("pop", "rdi")
 				self.asm2("mov", "rax", "60")
 				self.asm("syscall")
@@ -704,29 +651,33 @@ class Compiler(Engine):
 						self.asm1("jmp", f"{val.root.label()}")
 					if val.root.type in [FlowControl.OP_WITH, FlowControl.OP_LET]:
 						for offset, typ in self.locals.pop().values():
-							self.asm2("mov", "rdi", f"[locals+0x{offset * 8:x}]")
-							self.asm1("call", "__free")
-							self.num_locals -= 1
+							self.call_cfunction("__free", [f"[locals+0x{offset*8:x}]"])
+#							self.asm2("mov", "rdi", f"[locals+0x{offset * 8:x}]")
+#							self.asm1("call", "__free")
 					self.label(instruction.label())
 
 			case Token(type=FlowControl.OP_LET, value=val):
 				self.block(f"let {' '.join(i.value for i in val.data)}", instruction)
 				l = {}
 				for var in val.data:
-					self.asm1("pop", "rdi")
-					self.asm1("call", "__malloc")
-					self.asm2("mov", f"qword [locals+{self.num_locals * 8}]", "rax")
+					#self.asm1("pop", "rdi")
+					#self.asm1("call", "__malloc")
+					self.call_cfunction("__malloc", [None])
+
+					self.asm2("mov", f"qword [locals+0x{self.num_locals * 8:x}]", "rax")
 					self.asm2("mov", "qword [rax]", "0")
 					l[var.value] = (self.num_locals, FlowControl.OP_LET)
 					self.num_locals += 1
 				self.locals.append(l)
 
 			case Token(type=FlowControl.OP_WITH, value=val):
-				self.block(f"let {' '.join(i.value for i in val.data)}", instruction)
+				self.block(f"with {' '.join(i.value for i in val.data)}", instruction)
 				l = {}
 				for var in val.data:
-					self.asm2("mov", "rdi", "8") # f"{var.size}"?
-					self.asm1("call", "__malloc")
+					#self.asm2("mov", "rdi", "8") # f"{var.size}"?
+					#self.asm1("call", "__malloc")
+					self.call_cfunction("__malloc", ["8"])
+
 					self.asm2("mov", f"qword [locals+0x{self.num_locals * 8:x}]", "rax")
 					self.asm1("pop", "rbx")
 					self.asm2("mov", "qword [rax]", "rbx")
@@ -799,7 +750,7 @@ class Compiler(Engine):
 				self.asm1("push", "rbx")
 
 			case Token(type=PreprocTypes.MEMORY, value=val):
-				name = val[0].value
+				name = val.data[0].value
 				if name in self.globals:
 					size, token = self.globals[name]
 					self.asm1("push", f"{token.label()}")
@@ -807,9 +758,9 @@ class Compiler(Engine):
 					raise ValueError("Should have been caught by parser")
 
 			case Token(type=OpTypes.OP_WORD, value=val):
-				self.block(f"var {val}", instruction)
 				for d in reversed(self.locals):
 					if d.get(val, None) is not None:
+						self.block(f"var {val}", instruction)
 						offset, typ = d[val]
 						if typ == FlowControl.OP_WITH:
 							self.asm2("mov", "rax", f"[locals+0x{offset * 8:x}]")
@@ -823,7 +774,18 @@ class Compiler(Engine):
 							self.asm1("push", "rax")
 						break
 				else:
-					raise ValueError("Should have been caught by the type checker")
+					if val in self.procs:
+						self.block(f"CALL {val}", instruction)
+						proc = self.procs[val]
+						self.asm1("call", f"{proc.root.label()}")
+						nout = len(proc.out)
+						nargs = len(proc.args)
+						offset = (nargs + 3) * 8
+						for i in range(nout):
+							self.asm2("mov", "rbx", f"qword [rsp-0x{offset:x}]")
+							self.asm1("push", "rbx")
+					else:
+						raise ValueError("Should have been caught by the type checker")
 
 			case Token(type=PreprocTypes.CALL, value=val):
 				self.block(f"CALL {val}", instruction)
@@ -875,7 +837,10 @@ class Compiler(Engine):
 		self.asm1("segment", ".data")
 		for index, s in enumerate(self.strs):
 			self.label(f"STR_{index}", nl=False)
-			self.asm1("db", ','.join(map(hex, s.encode('utf8'))))
+			self.asm1("db", ','.join(map(hex, s.encode('utf8'))) + ',0x0')
+
+		self.label("rsp_align", nl=False)
+		self.asm1("dq", "1")
 		
 		self.block("MEMORY", None)
 
@@ -886,9 +851,11 @@ class Compiler(Engine):
 			self.label(token.label(), nl=False)
 			self.asm1("resb", f"{size}")
 
-		self.label("locals", nl=False)
-		self.asm1("resq", f"{LOCALS_CAPACITY}")
+		if self.num_locals:
+			self.label("locals", nl=False)
+			self.asm1("resq", f"{self.num_locals}")
 
+		self.buffer.write("BITS 64\n")
 		align = max([j.size for i in self._code for j in i])
 		for i in self._code:
 			for j in i:

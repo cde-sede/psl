@@ -11,9 +11,8 @@ from .errors import (
 	InvalidSyntax,
 )
 
+from .classes import TypesType, TokenInfo
 
-class TypesType(Enum):
-	pass
 
 class PreprocTypes(TypesType):
 	MACRO		 = auto()
@@ -123,127 +122,6 @@ class TokenTypes(Enum):
 	CAST		 = auto()
 
 	TOKEN_COUNT	 = auto()
-
-@dataclass
-class TokenInfo:
-	type: TokenTypes
-	string: str
-	start: tuple[int, int]
-	end: tuple[int, int]
-	line: str
-	file: str
-	parent: 'Optional[TokenInfo]' = None
-
-	def __repr__(self) -> str:
-		return f"TokenInfo(type={self.type}, string={self.string!r}, start={self.start!r}, end={self.end!r}, line={self.line!r} file={self.file})"
-
-	def error(self) -> str:
-		return f"{self.line}{'': <{self.start[1]}}{'':^<{self.end[1] - self.start[1]}}"
-
-	def copy(self, parent: 'Optional[TokenInfo]'=None):
-		return TokenInfo(
-			type=self.type,
-			string=self.string,
-			start=self.start,
-			end=self.end ,
-			line=self.line,
-			file=self.file,
-			parent=self.parent if parent is None else parent
-)
-
-@dataclass
-class FlowInfo:
-	root: 'Token' # OP_IF | OP_WHILE | OP_MACRO
-	prev: Optional['Token'] = None
-	next: Optional['Token'] = None
-	end: Optional['Token'] = None
-
-	haselse: bool = False
-	data: Any = None
-
-	def __repr__(self):
-		return f"FlowInfo(root={self.root.type}, data={self.data})"
-
-
-class Token:
-	__slots__ = ("type", "value", "info", "id", "position")
-
-	type: TypesType
-	value: Any
-	info: Optional[TokenInfo]
-	id: str
-	position: int
-
-	def __init__(self, type: TypesType, value: Any=None, info=None):
-		self.value = value
-		self.type = type
-		self.info = info
-		self.id = str(uuid.uuid4())[:8]
-		self.position = -1
-
-	def __repr__(self) -> str:
-		return f"{self.type} {f" {self.value}" if self.value else ""}"
-
-	def label(self) -> str:
-		return f"{self.type.name}_{self.id}"
-
-	def copy(self, parent: Optional[TokenInfo]=None) -> 'Token':
-		return Token(
-			value=self.value,
-			type=self.type,
-			info=self.info.copy(parent) if self.info else (parent if parent else None),
-		)
-
-
-@dataclass
-class Type:
-	name: str
-	_size: int
-	parent: 'Type | None' = None
-
-	@property
-	def size(self):
-		return self.parent.size if self.parent else self._size
-
-	def __getitem__(self, key: 'Type'):
-		new = deepcopy(key)
-		def f(n):
-			if n.parent is not None: f(n.parent)
-			else: n.parent = self
-		f(new)
-		return new
-
-	def __eq__(self, other):
-		assert isinstance(other, Type) or other is None
-		return ((self.name == other.name
-				if other.name != 'ANY' and self.name != 'ANY'
-				else True) and (self.parent == other.parent)) if other is not None else False
-
-	def __repr__(self):
-		w = f"{self.name}"
-		n = self
-		while (n := n.parent):
-			w = f"{n.name}[{w}]"
-		return w
-
-	def __hash__(self):
-		return hash(repr(self))
-
-
-@dataclass
-class Symbol:
-	type: Any
-	data: Any
-
-
-@dataclass
-class Procedure:
-	root: Token
-	end: Token
-	name: str
-	args: list[tuple[Token, Type]]
-	out: list[tuple[Token, Type]]
-	body: list[Token]
 
 
 NUMBER_REG	 = re.compile(r"^(\s*)(-?\d+)(\s+|$)")

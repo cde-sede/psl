@@ -1,4 +1,4 @@
-from .lexer import (TokenInfo, Token)
+from .classes import (TokenInfo, Token)
 import sys
 
 from .errors import (
