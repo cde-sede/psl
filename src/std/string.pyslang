@@ -120,3 +120,76 @@ out
 	end
 	input @str.count ==
 end
+
+memory __print_char_buffer 1 end
+
+proc putchar
+	c :char
+in
+	c __print_char_buffer !
+
+	1 __print_char_buffer stdout write drop
+end
+
+proc putcstr
+	str :char*
+in
+	0 while
+		if dup str + @ '\0' != do
+			dup str + @ putchar true
+		else
+			false
+		end
+	do
+		++
+	end drop
+end
+
+proc putstdstr
+	str :any*
+in
+	str @str.data str @str.count with len data do
+		len data putstr
+	end
+end
+
+proc putnbr
+	number :int
+in
+	if number 0 < do
+		'-' putchar
+	end
+	if number 10 >= do
+		number 10 / putnbr
+	end
+	number 10 % :char '0' + putchar
+end
+
+
+// index *(data + index)+total*10
+
+proc atoi str :any* in :int out
+	str @str.data str @str.count with len data do
+		0 0 while dup len < do
+			dup data + @ '0' - :int rot 10 * + swap
+			++
+		end drop
+	end
+end
+
+proc strcpy
+	dst :char*
+	src :char*
+in
+	0 while
+		if dup src + @ '\0' != do
+			dup src + @ over dst + !
+			true
+		else
+			false
+		end
+	do
+		++
+	end
+	src + '\0' swap !
+end

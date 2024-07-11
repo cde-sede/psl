@@ -361,11 +361,17 @@ macro AT_FDCWD -100 end
 
 macro read	 SYS_read   syscall3 end
 macro write	 SYS_write  syscall3 end
-macro open	 SYS_open   syscall3 end
+macro open	 SYS_open   syscall2 end
 macro close	 SYS_close  syscall1 end
 macro openat SYS_openat syscall3 end
 macro fstat  SYS_fstat  syscall2 end
 macro mmap   SYS_mmap   syscall6 end
+
+macro execve SYS_execve syscall3 end
+macro fork   SYS_fork   syscall  end
+macro wait4  SYS_wait4  syscall4 end
+
+
 
 macro fputstr write drop end
 macro  putstr stdout fputstr end
@@ -416,3 +422,44 @@ macro sizeof(st_blocks)   8 end
 macro sizeof(st_atim)    16 end
 macro sizeof(st_mtim)    16 end
 macro sizeof(st_ctim)    16 end
+
+
+
+
+
+macro _WSTOPPED 127 end
+macro _WCONTINUED 65535 end
+
+macro _WSTATUS _WSTOPPED band end
+
+macro WIFSTOPPED 255 band _WSTOPPED == end
+macro WSTOPSIG x 8 >> 255 band end
+macro WIFSIGNALED _WSTATUS dup _WSTOPPED != swap 0 != band end
+macro WTERMSIG _WSTATUS end
+macro WIFEXITED _WSTATUS 0 == end
+macro WEXITSTATUS 8 >> 255 band end
+macro WIFCONTINUED _WCONTINUED band _WCONTINUED == end
+
+macro timeval 16 end
+macro timeval.tv_sec 8 end
+macro timeval.tv_usec 8 end
+
+// Though I doubt I'll ever use it
+// since I added struct stat, doing the same for rusage is only fair
+macro rusage? 144 end
+macro rusage.ru_utime 0 + end
+macro rusage.ru_stime 8 + end
+macro rusage.ru_maxrss 16 + end
+macro rusage.ru_ixrss 24 + end
+macro rusage.ru_idrss 32 + end
+macro rusage.ru_isrss 40 + end
+macro rusage.ru_minflt 48 + end
+macro rusage.ru_majflt 56 + end
+macro rusage.ru_nswap 64 + end
+macro rusage.ru_inblock 72 + end
+macro rusage.ru_oublock 80 + end
+macro rusage.ru_msgsnd 88 + end
+macro rusage.ru_msgrcv 96 + end
+macro rusage.ru_nsignals 104 + end
+macro rusage.ru_nvcsw 112 + end
+macro rusage.ru_nivcsw 120 + end

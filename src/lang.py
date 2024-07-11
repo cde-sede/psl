@@ -1,4 +1,4 @@
-from typing import Optional, TextIO, BinaryIO, Type, Any
+from typing import Optional, TextIO, BinaryIO, Type, Any, cast
 from pathlib import Path
 
 import os
@@ -8,7 +8,19 @@ import shutil
 from dataclasses import dataclass
 from itertools import batched
 
-from .engine import Engine, Compiler, Interpreter 
+
+from .classes import (
+	AbstractProgram,
+	Engine,
+	Token,
+	FlowInfo,
+
+	Type,
+	Symbol,
+	Procedure,
+)
+
+from .engine import Compiler, Interpreter 
 from .typechecker import (
 	TypeChecker,
 	TypeCheckerException,
@@ -19,14 +31,8 @@ from .typechecker import (
 
 from .lexer import (
 	Tokenize,
-	Token,
-	FlowInfo,
 	TokenInfo,
 	TokenTypes,
-
-	Type,
-	Symbol,
-	Procedure,
 
 	OpTypes,
 	PreprocTypes,
@@ -284,9 +290,7 @@ def procedureFactory(token: Token, name: Token, args: list[Token], out: list[Tok
 				body)
 
 
-class Program:
-	class Comment(Exception): ...
-	class EndLine(Exception): ...
+class Program(AbstractProgram):
 	def __init__(self, path: str | Path, engine: Optional[Engine]=None, includes: Optional[list[str | Path]]=None):
 		self.instructions: list[Token] = []
 		self.engine: Optional[Engine] = engine
@@ -296,10 +300,18 @@ class Program:
 		self.globals: dict[str, Symbol] = {}
 		self.let_depth = 0
 		self._in_preproc = 0
-		self._preproc_type = None
 		self._position = 0
 		self.includes: list[Path] = [self.path.parent, Path(os.getcwd()), Path(__file__).parent] + ([Path(i) for i in includes] if includes else [])
 
+	def match_word(self, token: TokenInfo) -> list[Token]:
+		if token.string in self.symbols:
+			if self.symbols[token.string].type == PreprocTypes.MEMORY:
+				return [self.symbols[token.string].data]
+			elif self.symbols[token.string].type == PreprocTypes.PROC:
+				return [CALL(token.string, info=token)]
+			elif self.symbols[token.string].type == PreprocTypes.MACRO:
+				return [LABEL(name=token.string, info=token), *[i.copy(token) for i in self.symbols[token.string].data]]
+		return [WORD(val=token.string, info=token)]
 
 	def match_token(self, token: TokenInfo) -> list[Token]:
 		if token.type == TokenTypes.NUMBER:
@@ -317,15 +329,7 @@ class Program:
 				raise UnknownToken(token, "Is not a recognized symbol")
 			return [OPERANDS[token.string](token.string, token)]
 		if token.type == TokenTypes.WORD and token.string not in KEYWORDS:
-			if token.string in self.symbols:
-				if self.symbols[token.string].type == PreprocTypes.MEMORY:
-					return [PUSHMEMORY(token.string)]
-					return [self.symbols[token.string].data]
-				elif self.symbols[token.string].type == PreprocTypes.PROC:
-					return [CALL(token.string, info=token)]
-				elif self.symbols[token.string].type == PreprocTypes.MACRO:
-					return [LABEL(name=token.string, info=token), *[i.copy(token) for i in self.symbols[token.string].data]]
-			return [WORD(val=token.string, info=token)]
+			return self.match_word(token)
 		if token.type == TokenTypes.NEW_LINE:
 			raise self.EndLine()
 		if token.type == TokenTypes.CAST:
@@ -474,8 +478,13 @@ class Program:
 
 		self.symbols[name] = Symbol(PreprocTypes.PROC, root)
 
+		for i, e in enumerate(root.value.body):
+			if e.type == OpTypes.OP_WORD and e.value == name:
+					root.value.body[i] = CALL(e.info.string, info=e.info)
+
 	def parse_memory(self, tokens: list[Token]):
 		assert tokens[1].info
+		assert isinstance(tokens[0].value, FlowInfo)
 
 		if len(tokens) == 1:
 			raise InvalidSyntax(tokens[0].info, "`memory` requires a name")
@@ -484,7 +493,8 @@ class Program:
 		if tokens[1].info.string in self.symbols:
 			raise SymbolRedefined(tokens[1].info, "Has already been defined")
 
-		self.symbols[tokens[1].info.string] = Symbol(PreprocTypes.MEMORY, tokens)
+		tokens[0].value.data = tokens[1:]
+		self.symbols[tokens[1].info.string] = Symbol(PreprocTypes.MEMORY, tokens[0])
 		self.globals[tokens[1].info.string] = self.symbols[tokens[1].info.string]
 
 	def process_flow_control(self):

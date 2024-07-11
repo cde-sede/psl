@@ -1,8 +1,11 @@
-from .lexer import (
+from .classes import (
 	Token,
 	Type,
 	Procedure,
 	FlowInfo,
+)
+
+from .lexer import (
 	FlowControl,
 	TypesType,
 	OpTypes,
@@ -600,11 +603,6 @@ class _TypeChecker:
 							self.stack.append(d[key])
 							break
 					else:
-						# TODO remove this, it's a hacky fix to allow for recursion
-						# I just should redo the whole parser now that i have more
-						# knowledge, it was a crappy design meant to be quickly working
-						# to allow me to focus on the design of the language and not
-						# the actual compiler code
 						if key in self.procedures:
 							self.check([i[1] for i in self.procedures[key].args], token)
 							for i in self.procedures[key].out:
