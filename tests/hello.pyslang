@@ -1,2 +1,0 @@
-"Hello, world!\n" 1 1 syscall3 drop
-0 exit

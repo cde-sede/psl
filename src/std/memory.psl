@@ -1,0 +1,84 @@
+proc cmalloc
+	n :int
+in
+	:any*
+out
+	n (
+		:int in
+		:any* out
+
+		pop  rdi
+		push rbp
+		mov  qword [rsp_align],rsp
+		and  rsp,-0x10
+		sub  rsp,0x10
+		call __malloc
+		mov  rsp,qword [rsp_align]
+		pop  rbp
+		push rax
+	)
+end
+
+proc cfree
+	ptr :any*
+in
+	ptr (
+		:any* in out
+
+		pop  rdi
+		push rbp
+		mov  qword [rsp_align],rsp
+		and  rsp,-0x10
+		sub  rsp,0x10
+		call __free
+		mov  rsp,qword [rsp_align]
+		pop  rbp
+	)
+end
+
+proc memcpy
+	dst :char*
+	src :char*
+	n :uint
+in
+	:any*
+out
+	n src dst (
+		:char* :char* :uint in
+		:any* out
+
+		pop  rdi
+		pop  rsi
+		pop  rdx
+		push rbp
+		mov  qword [rsp_align],rsp
+		and  rsp,-0x10
+		sub  rsp,0x10
+		extern memcpy
+		call memcpy
+		mov  rsp,qword [rsp_align]
+		pop  rbp
+		push rax
+	)
+end
+
+proc bzero
+	s :any*
+	n :uint
+in
+	n s (
+		:any* :uint in out
+
+		pop  rdi
+		pop  rsi
+		push rbp
+		mov  qword [rsp_align],rsp
+		and  rsp,-0x10
+		sub  rsp,0x10
+		extern bzero
+		call bzero
+		mov  rsp,qword [rsp_align]
+		pop  rbp
+	)
+end
+

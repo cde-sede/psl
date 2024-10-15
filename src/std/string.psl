@@ -1,0 +1,376 @@
+include "syscalls.psl"
+
+macro NULLSTR 0 :char* end
+
+struct str
+	count :int
+	data :char*
+
+	proc $
+		this :str*
+		arg :char*
+		len :int
+	in
+		len this !str.count
+		arg this !str.data
+	end
+
+	proc $
+		this :str*
+		arg :char*
+		len :uint
+	in
+		len :int this !str.count
+		arg this !str.data
+	end
+
+	proc ~
+		this :str*
+	in
+		:char* 
+		:uint 
+	out
+		this @str.count :uint
+		this @str.data
+	end
+
+end
+
+proc strlen
+	s :char*
+in
+	:int
+out
+	s (
+		:char* in
+		:int out
+
+			pop     rdi
+			mov     rax, 0
+			jmp     _strlen_body
+		_strlen_inc:
+			inc     rax
+			inc     rdi
+		_strlen_body:
+			cmp     byte [rdi], 0
+			jne     _strlen_inc
+			push    rax
+	)
+end
+
+
+proc putpstr
+	s :char*
+	l :uint
+in
+	l s 1 1 syscall3 drop
+end
+
+proc putcstr
+	s :char*
+in
+	s strlen s 
+	1 1 syscall3 drop
+end
+
+proc eputpstr
+	s :char*
+	l :uint
+in
+	l s 2 1 syscall3 drop
+end
+
+proc eputcstr
+	s :char*
+in
+	s strlen s
+	2 1 syscall3 drop
+end
+
+proc putstr
+	s :str*
+in
+	s @str 1 1 syscall3 drop
+end
+
+proc eputstr
+	s :str*
+in
+	s @str 2 1 syscall3 drop
+end
+
+proc strcpy
+	dst :char*
+	src :char*
+in
+	0 while
+		if dup src + @char :bool do
+			dup src + @char
+			over dst + !char
+			true
+		else
+			false
+		end
+	do
+		++
+	end drop
+end
+
+proc strncpy
+	dst :char*
+	src :char*
+	n :int
+in
+	0 while
+		if dup n >= do
+			false
+		else
+			if dup src + @char :bool do
+				dup src + @char
+				over dst + !char
+				true
+			else
+				false
+			end
+		end
+	do
+		++
+	end drop
+end
+
+proc str->at()
+	this :str*
+	n :int
+in
+	:char
+out
+	this @str.data n + @char
+end
+
+proc str->lshrink()
+	str :str*
+in
+	str @str.count -- str !str.count
+	str @str.data ++ str !str.data
+end
+
+proc str->rshrink()
+	str :str*
+in
+	str @str.count -- str !str.count
+end
+
+proc str->eq()
+	other :str*
+	this :str*
+in
+	:bool
+out
+	?int let index :int do
+		0 index !int
+		if this @str.count other @str.count == do
+			while
+				if index @int this @str.count < do
+					index @int this str->at()
+					index @int other str->at()
+					==
+				else false end
+			do
+				index @int ++ index !int
+			end
+			index @int other @str.count ==
+		else
+			false
+		end
+	end
+end
+
+proc str->eq()
+	other :char*
+	length :uint
+	this :str*
+in
+	:bool
+out
+	?str let s :str do
+		length other s !str
+		this s str->eq()
+	end
+end
+
+proc str->find()
+	c :char
+	input :str*
+in
+	:bool
+out
+	0 while 
+		if dup input @str.count < do
+			dup input str->at() c !=
+		else false end
+	do
+		++
+	end
+	input @str.count !=
+end
+
+proc str->find()
+	c :char
+	input :char*
+in
+	:bool
+out
+	0 while 
+		if dup input + @char '\0' != do
+			dup input + @char c !=
+		else false end
+	do
+		++
+	end
+	input + @char '\0' !=
+end
+
+proc str->split()
+	delim :char
+	buffer :str*
+	input :str*
+in
+	input @str.data buffer !str.data
+	0 buffer !str.count
+	while
+		if input @str.count 0 > do
+			input @str.data @char delim !=
+		else false end
+	do
+		input str->lshrink()
+		buffer @str.count ++ buffer !str.count
+	end
+	if input @str.count 0 > do
+		input str->lshrink()
+	end
+end
+
+proc str->split()
+	delim :char*
+	length :uint
+	buffer :str*
+	input :str*
+in
+	input @str.data buffer !str.data
+	0 buffer !str.count
+	while
+		if input @str.count 0 > do
+			if delim input @str.data @char str->find() false == do
+				true
+			else
+				while
+					delim input @str.data @char str->find() false !=
+				do
+					input str->lshrink()
+				end
+				false
+			end
+		else
+			false
+		end
+	do
+		input str->lshrink()
+		buffer @str.count ++ buffer !str.count
+	end
+end
+
+proc str->isdigit()
+	this :str*
+in
+	:bool
+out
+	0 while
+		if dup this @str.count < do
+			dup this str->at() '-' ==
+		else false end
+	do ++ end
+	while
+		if dup this @str.count < do
+			dup this str->at() '0' >=
+			over this str->at() '9' <= &
+		else false end
+	do
+		++
+	end
+	this @str.count ==
+end
+
+proc atoi
+	str :str*
+in
+	:int
+out
+	str @str swap :int swap with data :char* len :int do
+		0 0 while dup len < do
+			dup data + @char '0' - :int rot 10 * :int + swap
+			++
+		end drop
+	end
+end
+
+memory __print_char_buffer :char 1 end
+
+proc putchar
+	c :char
+in
+	c __print_char_buffer !char
+
+	1 __print_char_buffer stdout write drop
+end
+
+
+proc putnbr
+	number :int
+in
+	if number 0 < do
+		'-' putchar
+	end
+	if number 10 >= do
+		number 10 / putnbr
+	end
+	number 10 % :char '0' + putchar
+end
+
+
+proc strcmp
+	s1 :char*
+	s2 :char*
+in
+	:int
+out
+	s1 s2 (
+		:char* :char* in
+		:int out
+
+			pop     rdi
+			pop     rsi
+
+			xor     rax, rax
+			xor     rbx, rbx
+		_strcmp_body:
+			mov     al, [rdi]
+			mov     bl, [rsi]
+
+			cmp     al, bl
+			jne     _strcmp_ret
+			test    al, al
+			je      _strcmp_ret_zero
+			inc     rdi
+			inc     rsi
+			jmp     _strcmp_body
+		_strcmp_ret_zero:
+			mov     rax, 0
+			jmp     _strcmp_end
+		_strcmp_ret:
+			sub     al, bl
+			movsx   rax, al
+		_strcmp_end:
+			push    rax
+
+	)
+end

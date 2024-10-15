@@ -7,10 +7,11 @@ import difflib
 
 if __name__ == '__main__':
 	from .lang import (
-		compile, interpret, fclean, callcmd,
-		MakeException, NASMException, LinkerException
+		compile, callcmd,
+		MakeException, NASMException, LinkerException,
+
 	)
-	from .engine import Interpreter, Compiler
+	#from .engine import Interpreter, Compiler
 	import sys
 
 	parser = argparse.ArgumentParser(prog="slang", description="A stack based language written in python")
@@ -38,62 +39,24 @@ if __name__ == '__main__':
 						  help="If -e --exec flag, adds every value provided as an argv, otherwise ignored")
 
 
-	sub_interpret.add_argument('-s', '--source', required=True,
-						  help="The source code")
-	sub_interpret.add_argument('-o', '--output', default='stdout',
-						  help="Adds every -I --include folder provided to the search path for includes, if a file is present in multiple path, the first one is used")
-	sub_interpret.add_argument('-I', '--include', nargs='*', default=[], action='extend',
-						  help="Adds every -I --include folder provided to the search path for includes, if a file is present in multiple path, the first one is used")
-	sub_interpret.add_argument('-A', '--argv', nargs='*', default=[], action='extend',
-						  help="Adds every value provided as an argv, by default the source's basename is prepended as a path")
-
-	sub_lex.add_argument('-s', '--source', required=True,
-						  help="The source code")
+#	sub_interpret.add_argument('-s', '--source', required=True,
+#						  help="The source code")
+#	sub_interpret.add_argument('-o', '--output', default='stdout',
+#						  help="Adds every -I --include folder provided to the search path for includes, if a file is present in multiple path, the first one is used")
+#	sub_interpret.add_argument('-I', '--include', nargs='*', default=[], action='extend',
+#						  help="Adds every -I --include folder provided to the search path for includes, if a file is present in multiple path, the first one is used")
+#	sub_interpret.add_argument('-A', '--argv', nargs='*', default=[], action='extend',
+#						  help="Adds every value provided as an argv, by default the source's basename is prepended as a path")
+#
+#	sub_lex.add_argument('-s', '--source', required=True,
+#						  help="The source code")
 
 	args = parser.parse_args()
 
 	sub_fclean.add_argument('-v', '--verbose', action="store_true",
 						  help="Displays every command executed")
 
-	if args.engine == 'fclean':
-		fclean(verbose=args.verbose)
-
-#	if args.engine == 'test':
-#		for file in Path(args.source).glob('*.pyslang') if Path(args.source).is_dir() else [Path(args.source)]:
-#			print(f"Test [{file}]")
-#			try:
-#				code = main(source=file, output=file.with_suffix(''), engine=Compiler, includes=args.include)
-#			except (MakeException, NASMException, LinkerException) as e:
-#				pass
-#
-#			sio = StringIO()
-#			sys.modules['__main__'].argv = [f"./{file.with_suffix('')}", *args.argv] # pyright: ignore
-#			interp_code = main(source=file, output=sio, engine=Interpreter, includes=args.include)
-#			sio.seek(0)
-#
-#			p = subprocess.run([f"./{file.with_suffix('')}", *args.argv], stdout=subprocess.PIPE)
-#			compil_code = p.returncode
-#
-#			if interp_code != compil_code:
-#				print(f"[{file}] \033[31mFailure\033[0m: Different return code")
-#			compil_bytes = p.stdout
-#			interp_bytes = sio.read().encode('utf8')
-#
-#			if interp_bytes != compil_bytes:
-#				print(f"[{file}] \033[31mFailure\033[0m: Different content")
-#				
-##				print(interp_bytes.decode('utf8').split('\n'))
-##				print(compil_bytes.decode('utf8').split('\n'))
-#				for i in difflib.unified_diff(interp_bytes.decode('utf8').split('\n'), compil_bytes.decode('utf8').split('\n')):
-#					print(i)
-#			else:
-#				print(f"[{file}] \033[32mSuccess\033[0m")
-#
-#		exit(0)
-
-	if args.engine == 'interpret':
-		interpret(source=args.source, includes=args.include, argv=[f"./{Path(args.source).stem}", *args.argv], output=args.output)
-	elif args.engine == 'compile':
+	if args.engine == 'compile':
 		if args.argv and not args.exec:
 			parser.error("-A --argv requires -e --exec")
 		try:

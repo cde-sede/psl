@@ -1,0 +1,67 @@
+include "string.psl"
+struct show_debug
+	empty :any
+	proc $ this :show_debug* in
+		"UNREACHABLE" dump drop
+	end
+end
+
+macro WARNING 1 end
+macro ERROR 2 end
+macro ASSERTION 3 end
+
+struct Error
+	message :str*
+	level :int
+end
+
+
+proc _RAISE
+	message :str*
+	level :int
+in
+	if level WARNING == do
+		"WARNING: " putpstr message putstr "\n" putpstr
+	elif level ERROR == do
+		"ERROR: " putpstr message putstr "\n" putpstr ERROR exit
+	elif level ASSERTION == do
+		"ASSERTION ERROR: " putpstr message putstr "\n" putpstr ASSERTION exit
+	end
+end
+
+proc RAISE
+	err :Error*
+in
+	err @Error.level
+	err @Error.message
+	_RAISE
+end
+
+proc RAISE
+	message :str*
+	level :int
+in
+	level message _RAISE
+end
+
+proc RAISE
+	message :char*
+	len :int
+	level :int
+in
+	?str let s :str do
+		len message s !str
+		level s _RAISE
+	end
+end
+
+proc RAISE
+	message :char*
+	len :uint
+	level :int
+in
+	?str let s :str do
+		len :int message s !str
+		level s _RAISE
+	end
+end
