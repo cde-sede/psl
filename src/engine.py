@@ -211,6 +211,8 @@ class GlobalVariable:
 	@property
 	def label(self):
 		return f"var_{self.name}@{self.id}"
+
+
 DEBUG_PTR = 0
 indent = 0
 GLOBALS: list[GlobalVariable] = []
@@ -345,11 +347,14 @@ class Compiler:
 		cc.asm1("push", "rbp")
 		cc.asm2("mov", "rbp", "rsp")
 		cc.run(proc.body)
-		nargs = len(proc.args)
-		nout = len(proc.out)
-		cc.asm2("add", "rsp", f"0x{nout*8:x}")
+
+		for i in range(len(proc.out)):
+			cc.asm1("pop", "rax")
+			cc.asm2("mov", f"qword [retstack + 0x{i*8:x}]", "rax")
+
 		cc.asm1("pop", "rbp")
-		cc.asm1("ret", f"0x{nargs*8:x}")
+		cc.asm1("ret", f"0x{len(proc.args)*8:x}")
+
 		flat = sum(cc.code, [])
 		self.num_locals = cc.num_locals
 		self.code.insert(1, flat)
@@ -392,11 +397,10 @@ class Compiler:
 
 	def call_proc(self, proc: Proc):
 		self.asm1("call", f"{proc.label}")
-		nout = len(proc.out)
 		nargs = len(proc.args)
 		offset = (nargs + 3) * 8
-		for i in range(nout):
-			self.asm2("mov", "rbx", f"qword [rsp-0x{offset:x}]")
+		for i in reversed(range(len(proc.out))):
+			self.asm2("mov", "rbx", f"qword [retstack + 0x{i*8:x}]")
 			self.asm1("push", "rbx")
 
 	def call_cfunction(self, name: str, args: list[Any | None]) -> None:
@@ -599,18 +603,18 @@ class Compiler:
 				case Operand(operand=Operands.DIVMOD) as t:
 					self.block("divmod", t)
 					self.asm2("xor", "edx", "edx")
-					self.asm1("pop", "rsi")
-					self.asm1("pop", "rax")
-					self.asm1("div", "rax")
+					self.asm1("pop", "rsi") # 13
+					self.asm1("pop", "rax") # 2
+					self.asm1("div", "rsi")
 					self.asm1("push", "rax")
 					self.asm1("push", "rdx")
 
 				case Operand(operand=Operands.DIV) as t:
 					self.block("div", t)
 					self.asm2("xor", "edx", "edx")
-					self.asm1("pop", "rsi")
-					self.asm1("pop", "rax")
-					self.asm1("div", "rax")
+					self.asm1("pop", "rsi") # 13
+					self.asm1("pop", "rax") # 2
+					self.asm1("div", "rsi")
 					self.asm1("push", "rax")
 
 				case Operand(operand=Operands.MOD) as t:
@@ -618,7 +622,7 @@ class Compiler:
 					self.asm2("xor", "edx", "edx")
 					self.asm1("pop", "rsi")
 					self.asm1("pop", "rax")
-					self.asm1("div", "rax")
+					self.asm1("div", "rsi")
 					self.asm1("push", "rdx")
 
 				case Operand(operand=Operands.INC) as t:
