@@ -736,9 +736,9 @@ class TypeChecker:
 
 				def cmpstack(a, b):
 					if len(a) > len(b):
-						raise Errors.WhileError([i.origin[-1] for i in a[:-len(b)]], "While must not alter stack")
+						raise Errors.WhileError([i.origin[-1] for i in a[len(b):]], "While must not alter stack (got added)")
 					if len(a) < len(b):
-						raise Errors.WhileError([i.origin[-1] for i in b[:-len(a)]], "While must not alter stack")
+						raise Errors.WhileError([i.origin[-1] for i in b[len(a):]], "While must not alter stack (got removed)")
 					for x, y in zip(a, b):
 						if x.typ != y.typ:
 							raise INVALIDTYPE(x, y.typ)

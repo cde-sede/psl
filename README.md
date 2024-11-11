@@ -8,11 +8,11 @@
 include "string.psl"
 
 proc main
-	ac :int
-	av :char**
+    ac :int
+    av :char**
 in :int out
-	"Hello world" putpstr
-	0
+    "Hello world" putpstr
+    0
 end
 
 argv argc main exit
@@ -38,6 +38,12 @@ This is the list of what the language supports currently. **(As the project is w
 A number is defined as an optional `-` followed by any number of digits.
 ```
 1 -2 3333333333333
+```
+
+##### Booleans
+Booleans is defined as either `true` or `false`
+```
+true false
 ```
 
 ##### Char
@@ -129,36 +135,36 @@ For example the `str` type defined in the std lib `string.psl`
 
 ```
 struct str
-	count :int
-	data :char*
+    count :int
+    data :char*
 
-	proc $
-		this :str*
-		arg :char*
-		len :int
-	in
-		len this !str.count
-		arg this !str.data
-	end
+    proc $
+        this :str*
+        arg :char*
+        len :int
+    in
+        len this !str.count
+        arg this !str.data
+    end
 
-	proc $
-		this :str*
-		arg :char*
-		len :uint
-	in
-		len :int this !str.count
-		arg this !str.data
-	end
+    proc $
+        this :str*
+        arg :char*
+        len :uint
+    in
+        len :int this !str.count
+        arg this !str.data
+    end
 
-	proc ~
-		this :str*
-	in
-		:char* 
-		:uint 
-	out
-		this @str.count :uint
-		this @str.data
-	end
+    proc ~
+        this :str*
+    in
+        :char* 
+        :uint 
+    out
+        this @str.count :uint
+        this @str.data
+    end
 end
 ```
 
@@ -212,10 +218,93 @@ count buf fd 1 syscall3 drop
 ```
 
 ##### Arguments
- argc argv
+Command line arguments are accessed using `argc` (:int) and `argv` (:char**)
+`argv` returns a pointer to the first argument.
 
 ##### Control flow
- if else while
+PSL allows for basic flow control through `if` and `while`
+They are bound under a simple rule, the state of the stack (size and types) must remain the same across all flow control cases.
+Example:
+
+```
+// argc must stay on the stack
+argc if dup 1 == do
+    "There is one argument on the stack" 1 1 syscall3 drop
+end drop
+
+// without ther dup
+argc if 1 == do     // Error:line 1
+                    // argc if 1 == do
+                    //           ^^
+                    // If must not alter stack, except for a singular bool required for the do
+    "There is one argument on the stack" 1 1 syscall3 drop
+end
+
+// allowed because an int is pushed no matter what
+if true do
+    1
+else
+    2
+end
+
+// The types are different (:int vs :char vs :bool)
+if false do
+    1               // Error:line 2
+elif true do        //     1
+    'a'             // 
+else                //     ^
+    false           // Invalid type: expected char but received int
+end
+```
+
+```
+0 while dup 10 < do
+    dup dump
+    ++
+end
+
+0 while dup 10 < do
+    dump            // Error:line 1
+end                 // 0 while dup 10 < do
+                    // 
+                    // ^
+                    // While must not alter stack (got removed)
+
+
+0 while dup 10 < do
+    1               // Error:line 2
+end                 //      1
+                    //  
+                    //      ^
+                    //  While must not alter stack (got added)
+```
+
+The lack of `break` in while loops allows for some creative constructions.
+
+```
+proc strncpy
+    dst :char*
+    src :char*
+    n :int
+in
+    0 while
+        if dup n >= do
+            false
+        else
+            if dup src + @char :bool do
+                dup src + @char
+                over dst + !char
+                true
+            else
+                false
+            end
+        end
+    do
+        ++
+    end drop
+end
+
+```
 
 ##### Procedures
  proc in out end
